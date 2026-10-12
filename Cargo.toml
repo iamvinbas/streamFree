@@ -1,0 +1,47 @@
+[package]
+name = "streamfree"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Free, local, open-source live streaming studio: browser studio, guests, multistreaming and recording in one binary."
+license = "MIT"
+repository = "https://github.com/iamvinbas/streamFree"
+readme = "README.md"
+keywords = ["streaming", "rtmp", "webrtc", "studio", "multistream"]
+categories = ["multimedia::video", "command-line-utilities"]
+
+[[bin]]
+name = "streamfree"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+futures-util = "0.3"
+getrandom = "0.3"
+mime_guess = "2"
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
+rust-embed = "8"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "fs", "signal", "process"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+webbrowser = "1"
+webpki-roots = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

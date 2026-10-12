@@ -1,0 +1,7 @@
+/target
+/node_modules
+/tests/e2e/node_modules
+/tests/e2e/out
+*.mp4
+*.flv
+.DS_Store
