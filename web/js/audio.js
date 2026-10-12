@@ -177,6 +177,30 @@ export class Mixer {
     this.route();
   }
 
+  /**
+   * Where each source is heard, for checks: { sourceId: ['program',
+   * 'guest:<id>', 'monitor', ...] }. Every guest bus must exclude that guest.
+   */
+  routing() {
+    const out = {};
+    for (const [id, s] of this.sources) {
+      const muted = this.muted.has(id);
+      const inProgram = !muted && (s.kind === 'screen' || s.kind === 'media' ? this.featured === id : this.onStage.has(id));
+      const buses = [];
+      if (inProgram) buses.push('program');
+      if (!muted) {
+        for (const guestId of this.guestBuses.keys()) {
+          if (guestId === id) continue;
+          if (s.kind === 'screen' || s.kind === 'media' ? inProgram : true) buses.push(`guest:${guestId}`);
+        }
+      }
+      const hearIt = s.kind === 'host' ? false : s.kind === 'guest' || inProgram;
+      if (!muted && hearIt && this.monitorEnabled) buses.push('monitor');
+      out[id] = buses;
+    }
+    return out;
+  }
+
   /** Peak level 0..1 of a source, for meters. */
   level(id) {
     const s = this.sources.get(id);

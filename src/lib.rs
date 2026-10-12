@@ -12,4 +12,5 @@ pub mod mp4;
 pub mod net;
 pub mod rtmp;
 pub mod server;
+pub mod sharing;
 pub mod store;

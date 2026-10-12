@@ -1,15 +1,15 @@
 //! Reaching guests: HTTPS on the local network (cameras need a secure
-//! context, and plain `http://192.168.x.y` is not one) and an optional
-//! Cloudflare quick tunnel for guests on the internet.
+//! context, and plain `http://192.168.x.y` is not one) and a Cloudflare quick
+//! tunnel for guests on the internet. Both can be started and stopped while
+//! streamFree runs.
 
 use anyhow::{anyhow, bail, Context, Result};
 use axum::Router;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
 
 /// The address this machine uses to reach the network. No packet is sent:
 /// connecting a UDP socket only selects a route.
@@ -47,9 +47,21 @@ fn certificate(data_dir: &Path, ip: IpAddr) -> Result<(Vec<u8>, Vec<u8>)> {
     Ok((cert, key))
 }
 
-/// Serves `app` over HTTPS on all interfaces and returns the guest base URL.
-pub async fn serve_lan(app: Router, data_dir: &Path, port: u16) -> Result<String> {
-    let ip = lan_ip().ok_or_else(|| anyhow!("no network connection found"))?;
+/// A running HTTPS listener for guests on the local network.
+pub struct LanServer {
+    pub url: String,
+    handle: axum_server::Handle,
+}
+
+impl LanServer {
+    pub fn stop(&self) {
+        self.handle.graceful_shutdown(Some(Duration::from_secs(2)));
+    }
+}
+
+/// Serves `app` over HTTPS on all interfaces.
+pub async fn serve_lan(app: Router, data_dir: &Path, port: u16) -> Result<LanServer> {
+    let ip = lan_ip().ok_or_else(|| anyhow!("this computer is not connected to a network"))?;
     let (cert, key) = certificate(data_dir, ip)?;
     let config = axum_server::tls_rustls::RustlsConfig::from_pem(cert, key)
         .await
@@ -59,31 +71,90 @@ pub async fn serve_lan(app: Router, data_dir: &Path, port: u16) -> Result<String
     let std_listener =
         std::net::TcpListener::bind(addr).with_context(|| format!("port {port} is busy"))?;
     std_listener.set_nonblocking(true)?;
+    let handle = axum_server::Handle::new();
+    let server = axum_server::from_tcp_rustls(std_listener, config).handle(handle.clone());
     tokio::spawn(async move {
-        let server = axum_server::from_tcp_rustls(std_listener, config);
         if let Err(e) = server.serve(app.into_make_service()).await {
             tracing::error!("LAN server stopped: {e}");
         }
     });
-    Ok(format!("https://{ip}:{port}"))
+    Ok(LanServer {
+        url: format!("https://{ip}:{port}"),
+        handle,
+    })
 }
 
-static TUNNEL: Mutex<Option<Child>> = Mutex::const_new(None);
+/// Where cloudflared is installed, if it is. Apps started from Finder or the
+/// Start menu do not see the shell's PATH, so common install locations are
+/// checked too.
+pub fn find_cloudflared() -> Option<PathBuf> {
+    let exe = if cfg!(windows) {
+        "cloudflared.exe"
+    } else {
+        "cloudflared"
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(custom) = std::env::var_os("STREAMFREE_CLOUDFLARED") {
+        candidates.push(PathBuf::from(custom));
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|dir| dir.join(exe)));
+    }
+    if cfg!(windows) {
+        for var in ["ProgramFiles", "ProgramFiles(x86)"] {
+            if let Some(dir) = std::env::var_os(var) {
+                candidates.push(PathBuf::from(dir).join("cloudflared").join(exe));
+            }
+        }
+        if let Some(dir) = std::env::var_os("LOCALAPPDATA") {
+            candidates.push(PathBuf::from(dir).join(r"Microsoft\WinGet\Links").join(exe));
+        }
+    } else {
+        for dir in [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/snap/bin",
+        ] {
+            candidates.push(PathBuf::from(dir).join(exe));
+        }
+        if let Some(home) = dirs::home_dir() {
+            candidates.push(home.join(".local/bin").join(exe));
+        }
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
 
-/// Starts `cloudflared tunnel --url http://127.0.0.1:<port>` and returns the
-/// public `https://*.trycloudflare.com` URL it prints.
-pub async fn start_tunnel(port: u16) -> Result<String> {
-    let mut child = Command::new("cloudflared")
-        .args(["tunnel", "--no-autoupdate", "--url", &format!("http://127.0.0.1:{port}")])
+/// A running Cloudflare quick tunnel to the local studio.
+pub struct Tunnel {
+    pub url: String,
+    child: Child,
+}
+
+impl Tunnel {
+    pub async fn stop(mut self) {
+        let _ = self.child.kill().await;
+    }
+}
+
+/// Starts `cloudflared tunnel --url http://127.0.0.1:<port>` and waits for the
+/// public `https://*.trycloudflare.com` URL it prints. `on_exit` runs if the
+/// tunnel process ends later on its own.
+pub async fn start_tunnel(port: u16, on_exit: impl FnOnce() + Send + 'static) -> Result<Tunnel> {
+    let program = find_cloudflared().ok_or_else(|| anyhow!("cloudflared is not installed"))?;
+    let mut child = Command::new(program)
+        .args([
+            "tunnel",
+            "--no-autoupdate",
+            "--url",
+            &format!("http://127.0.0.1:{port}"),
+        ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| {
-            anyhow!("could not run cloudflared ({e}). Install it from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
-        })?;
+        .context("start cloudflared")?;
     let stderr = child.stderr.take().context("no stderr")?;
-    *TUNNEL.lock().await = Some(child);
     let mut lines = BufReader::new(stderr).lines();
     let found = tokio::time::timeout(Duration::from_secs(45), async {
         while let Some(line) = lines.next_line().await? {
@@ -96,19 +167,17 @@ pub async fn start_tunnel(port: u16) -> Result<String> {
     .await;
     let url = match found {
         Ok(Ok(Some(url))) => url,
-        Ok(Ok(None)) => bail!("cloudflared exited before printing a URL"),
+        Ok(Ok(None)) => bail!("cloudflared exited before printing an address"),
         Ok(Err(e)) => return Err(e.into()),
-        Err(_) => bail!("cloudflared did not print a URL within 45 s"),
+        Err(_) => bail!("cloudflared did not print an address within 45 s"),
     };
-    // Keep draining stderr so cloudflared never blocks on a full pipe.
-    tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
-    Ok(url)
-}
-
-pub async fn stop_tunnel() {
-    if let Some(mut child) = TUNNEL.lock().await.take() {
-        let _ = child.kill().await;
-    }
+    // Keep draining stderr so cloudflared never blocks on a full pipe; when it
+    // closes, the process has ended.
+    tokio::spawn(async move {
+        while let Ok(Some(_)) = lines.next_line().await {}
+        on_exit();
+    });
+    Ok(Tunnel { url, child })
 }
 
 fn find_tunnel_url(line: &str) -> Option<String> {
@@ -135,5 +204,15 @@ mod tests {
             find_tunnel_url("INF Requesting new quick Tunnel on trycloudflare.com..."),
             None
         );
+    }
+
+    #[test]
+    fn cloudflared_override_is_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("my-cloudflared");
+        std::fs::write(&fake, b"").unwrap();
+        std::env::set_var("STREAMFREE_CLOUDFLARED", &fake);
+        assert_eq!(find_cloudflared(), Some(fake));
+        std::env::remove_var("STREAMFREE_CLOUDFLARED");
     }
 }

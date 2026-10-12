@@ -230,7 +230,7 @@ pub fn run(options: Options) -> Result<()> {
                         tokio::time::timeout(Duration::from_secs(5), handle).await
                     });
                 }
-                runtime.block_on(crate::net::stop_tunnel());
+                runtime.block_on(crate::sharing::shutdown(&state));
                 *control_flow = ControlFlow::Exit;
             }
             _ => {}

@@ -65,7 +65,17 @@ irm https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.ps1 | ie
   - sottopancia preparati prima della diretta e ticker scorrevole;
   - condivisione schermo con audio;
   - clip video per intro e outro.
+- **Inviti integrati.** Nella finestra Invita scegli chi può entrare:
+  - questo computer;
+  - la tua rete locale (HTTPS);
+  - chiunque su internet, con un link gratuito di Cloudflare.
+
+  Poi condividi il link con QR code, WhatsApp, Telegram, email o un invito copiato.
 - **Commenti a schermo.** Leggi la chat di Twitch senza login e metti in onda un commento con un clic, oppure inserisci domande a mano.
+- **Personalizzabile:**
+  - *app:* tema (automatico, scuro, chiaro), colore d'accento, italiano o inglese, dimensione del testo, densità, pannello laterale a sinistra o a destra;
+  - *in onda:* cinque stili di carattere, forma e posizione delle targhette, aspetto dei banner (pieno, sfumato, contorno, vetro) e posizione, colori del ticker, spaziatura e angoli dei riquadri.
+- **Aiuto integrato.** Guide passo-passo per trovare la chiave di stream su YouTube, Twitch, Facebook, LinkedIn, Kick e X. Il pulsante **Prova** controlla il server di ogni destinazione prima di andare in diretta.
 - **Qualità.** 720p o 1080p a 30 o 60 fps, con l'encoder hardware del tuo computer.
 - **Privato per scelta.** Lo studio ascolta solo su `127.0.0.1`. Le chiavi di stream non lasciano mai il tuo computer, e non ci sono telemetria né server di streamFree.
 
@@ -74,26 +84,30 @@ La mappa completa delle funzionalità, comprese quelle in arrivo, è in [docs/fe
 ## Primi passi
 
 1. **Apri streamFree** e consenti videocamera e microfono quando il sistema lo chiede.
-2. **Aggiungi le destinazioni** (facoltativo): in **Destinations** scegli YouTube, Twitch, Facebook o un server RTMP personalizzato e incolla la chiave di stream.
-3. **Invita gli ospiti** con il pulsante **Invite** (vedi [Ospiti fuori dal tuo computer](#ospiti-fuori-dal-tuo-computer)).
-4. Prepara **Brand**, **Banners** e layout.
-5. Premi **Record** per registrare soltanto, oppure **Go live** per trasmettere su tutte le destinazioni scelte e, se vuoi, registrare insieme.
+2. **Aggiungi le destinazioni** (facoltativo): in **Destinazioni** scegli YouTube, Twitch, Facebook o un server RTMP personalizzato e incolla la chiave di stream. La guida "Dove trovo la chiave?" spiega dove trovarla.
+3. **Invita gli ospiti** con il pulsante **Invita**. Scegli chi può entrare (vedi [Ospiti](#ospiti)), poi manda il link o fai inquadrare il QR code.
+4. Prepara **Brand**, **Stile**, **Banner** e layout.
+5. Premi **Registra** per registrare soltanto, oppure **Vai in diretta** per trasmettere su tutte le destinazioni scelte e, se vuoi, registrare insieme.
 6. Chiudi la finestra per uscire. Una registrazione in corso viene prima finalizzata.
 
 Le registrazioni finiscono in `~/Movies/streamFree` su macOS e in `~/Videos/streamFree` su Windows e Linux. La finestra di fine diretta apre la cartella.
 
-## Ospiti fuori dal tuo computer
+## Ospiti
 
-I browser consentono la videocamera solo su pagine sicure (HTTPS), quindi il modo in cui gli ospiti ti raggiungono dipende da dove si trovano. Per ora si sceglie avviando streamFree da terminale:
+I browser consentono la videocamera solo su pagine sicure (HTTPS), quindi la finestra Invita chiede chi può entrare. streamFree ricorda la tua scelta.
 
-| Dove sono gli ospiti? | Avvia streamFree con | Cosa fanno gli ospiti |
+| Scelta | Chi può entrare | Cosa fanno gli ospiti |
 |---|---|---|
-| Nella rete di casa o dell'ufficio | `streamfree --app --lan` | Aprono il link e accettano una volta l'avviso del certificato |
-| Ovunque su internet | `streamfree --app --tunnel` | Aprono il link `https://….trycloudflare.com` |
-| Dietro un tuo proxy HTTPS | `streamfree --app --public-url https://studio.example.com` | Aprono il link |
+| **Questo computer** | Solo questo computer, per le prove | Aprono il link |
+| **Rete locale** | I dispositivi sulla tua Wi‑Fi o rete dell'ufficio | Aprono il link `https://…` e accettano una volta l'avviso del certificato |
+| **Internet** | Chiunque abbia il link | Aprono il link `https://….trycloudflare.com` |
 
-- `--tunnel` richiede [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/). Nel tunnel passano solo la pagina ospite e la segnalazione; audio e video viaggiano direttamente tra te e gli ospiti.
-- Se alcuni ospiti non riescono a connettersi (reti aziendali o mobili restrittive), aggiungi un server TURN in **Settings → Guests → ICE servers**.
+- **I link internet** usano lo strumento gratuito di Cloudflare [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/):
+  - va installato una volta: `brew install cloudflared` su macOS, `winget install --id Cloudflare.cloudflared` su Windows;
+  - l'indirizzo cambia a ogni riavvio di streamFree;
+  - attraverso Cloudflare passano solo la pagina ospite e la segnalazione; audio e video viaggiano direttamente tra te e gli ospiti.
+- **Ospiti che non riescono a connettersi** (reti aziendali o mobili restrittive): aggiungi un server TURN in **Impostazioni → Ospiti → Server ICE**.
+- **Un tuo proxy HTTPS:** avvia streamFree con `--public-url https://studio.example.com`.
 
 ## Riga di comando
 
@@ -109,7 +123,7 @@ streamfree [--app [--browser]] [--port 8787] [--lan] [--tunnel] [--public-url UR
 | *(nessuna)* | Studio in una scheda del browser predefinito (consigliati Chrome, Edge o Brave); Ctrl+C per uscire |
 | `--app` | La finestra di streamFree (quella che apre l'icona); chiudendola si esce |
 | `--browser` | Con `--app`: una finestra di Chrome/Edge/Brave invece della WebView di sistema |
-| `--lan`, `--tunnel`, `--public-url` | Come ti raggiungono gli ospiti (vedi sopra) |
+| `--lan`, `--tunnel`, `--public-url` | Sceglie all'avvio come ti raggiungono gli ospiti (la finestra Invita fa lo stesso) |
 
 Impostazioni, destinazioni e immagini caricate stanno in:
 
@@ -144,18 +158,22 @@ streamFree è giovane. Cosa è stato verificato, e come:
 
 | Area | Verificata con |
 |---|---|
-| Registrazione, due destinazioni RTMP in contemporanea, ospiti WebRTC, sincronia audio/video | Test automatici nel browser (Chrome vero, videocamera simulata) a ogni push |
+| Registrazione, due destinazioni RTMP in contemporanea, sincronia audio/video | Test automatici nel browser (Chrome vero, videocamera simulata) a ogni push |
+| Ospiti: tre insieme, ognuno sente tutti tranne se stesso, chat del backstage nei due sensi, rimozione di un ospite, uscita e rientro, limite di 16 ospiti, sostituzione del link di invito | Test automatici nel browser |
+| Ospiti dalla rete locale (HTTPS) e da internet (tunnel Cloudflare reale) | Test automatici nel browser, eseguiti in locale (in CI manca cloudflared) |
+| QR code, pulsanti di condivisione, interfaccia in italiano, ogni stringa tradotta | Test automatici nel browser |
 | Uscita RTMP e file MP4 | FFmpeg come verificatore indipendente nella suite di test |
 | App macOS: finestra nativa, 30 fps con la finestra ridotta a icona, audio sincronizzato | Smoke test integrato (`streamfree --smoke-test 8`) |
-| App macOS: permessi di videocamera e microfono | Test manuale |
-| Chat di Twitch, modalità LAN HTTPS, immagine disco macOS, script di installazione, link di download | Verifiche manuali e con script |
+| App macOS che ospita un ospite (host WebKit, ospite Chrome, programma ricevuto a 15 fps) | `npm run test:native` |
+| App macOS: videocamera, microfono e condivisione schermo | Test manuale |
+| I server di YouTube, Twitch, Facebook (RTMPS) e Kick (RTMPS) accettano la connessione di streamFree, e una chiave sbagliata dà un errore chiaro | Pulsante **Prova** e `cargo run --example ingest_probe`, con una chiave fittizia |
 
 Non ancora verificato:
 
-- **Invio alle piattaforme reali** (YouTube, Twitch, Facebook…). Segnala cosa funziona per te.
+- **Una diretta con una chiave vera.** I controlli di protocollo qui sopra passano, ma nessuna diretta reale è stata ancora fatta. Segnala cosa funziona per te.
+- **Ospiti da telefono e da altri browser.** Nessun ospite è ancora entrato da un telefono in rete mobile, né da Safari o Firefox.
 - **Windows.** App e installer si compilano e passano i test in CI, ma non sono ancora stati eseguiti su un PC Windows.
 - **Condurre da Linux.** Chrome su Linux sembra non avere un encoder AAC, quindi su Linux streamFree potrebbe funzionare solo per gli ospiti; in quel caso mostra un errore chiaro.
-- **Condivisione schermo nell'app macOS** e **`--tunnel`** dall'inizio alla fine.
 
 In programma:
 
@@ -163,8 +181,7 @@ In programma:
 - scene e uscita verticale;
 - chat di YouTube;
 - sfocatura dello sfondo;
-- sottotitoli locali;
-- scelta di LAN o tunnel direttamente dall'app.
+- sottotitoli locali.
 
 ## Sviluppo
 
@@ -172,16 +189,18 @@ In programma:
 git clone https://github.com/iamvinbas/streamFree && cd streamFree
 cargo build --release                       # target/release/streamfree
 cargo test                                  # test unitari + test con FFmpeg come oracolo (se installato)
-cd tests/e2e && npm install && npm test     # test nel browser: servono Google Chrome e ffmpeg
+cd tests/e2e && npm install && npm test     # test nel browser: servono Google Chrome e ffmpeg (cloudflared per il test internet)
+npm run test:native                         # macOS/Windows: l'app conduce mentre entra un ospite Chrome
 ./target/release/streamfree --smoke-test 8  # macOS/Windows: registra nella finestra dell'app, metà ridotta a icona
+cargo run --example ingest_probe            # come rispondono i server reali a una chiave fittizia
 ```
 
 Serve Rust 1.88 o successivo. Lo studio (`web/`) è HTML, CSS e JavaScript semplice, incorporato nel binario in fase di compilazione.
 
 | Percorso | Contenuto |
 |---|---|
-| `src/` | Core Rust: `server.rs` (HTTP/WebSocket), `live.rs` (distribuzione alle destinazioni), `rtmp/`, `mp4.rs`, `flv.rs`, `desktop.rs` (finestra nativa), `app.rs`, `chat.rs`, `net.rs`, `store.rs` |
-| `web/` | Pagine dello studio e degli ospiti, worker di composizione, worklet di cattura audio |
+| `src/` | Core Rust: `server.rs` (HTTP/WebSocket), `sharing.rs` (chi può entrare), `net.rs` (HTTPS in LAN, tunnel), `live.rs` (distribuzione alle destinazioni), `rtmp/`, `mp4.rs`, `flv.rs`, `desktop.rs` (finestra nativa), `app.rs`, `chat.rs`, `store.rs` |
+| `web/` | Pagine dello studio e degli ospiti, worker di composizione, worklet di cattura audio, traduzioni (`i18n.js`), aiuto (`help.js`) |
 | `site/` | Il sito, pubblicato su GitHub Pages a ogni push su `main` |
 | `packaging/` | Icone, script per `.app` e `.dmg` macOS, installer Windows Inno Setup |
 | `tests/` | Test di integrazione con FFmpeg e test end-to-end nel browser |

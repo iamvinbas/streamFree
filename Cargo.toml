@@ -1,6 +1,6 @@
 [package]
 name = "streamfree"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Free, local, open-source live streaming studio: browser studio, guests, multistreaming and recording in one binary."
@@ -24,6 +24,7 @@ dirs = "6"
 futures-util = "0.3"
 getrandom = "0.3"
 mime_guess = "2"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
 rust-embed = "8"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

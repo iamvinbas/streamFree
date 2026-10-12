@@ -138,7 +138,7 @@ const api = (method, path, body) => fetch(server.base + path, {
   method, headers: { 'x-streamfree-token': server.token, 'content-type': 'application/json' }, body: body && JSON.stringify(body),
 }).then(async (r) => (r.ok ? (r.status === 204 ? null : r.json()) : Promise.reject(new Error(await r.text()))));
 
-const ctx = await browser.newContext({ permissions: ['camera', 'microphone'] });
+const ctx = await browser.newContext({ permissions: ['camera', 'microphone'], locale: 'en-US' });
 const studio = await ctx.newPage();
 const pageErrors = [];
 studio.on('pageerror', (e) => pageErrors.push(e.message));
@@ -185,7 +185,7 @@ await test('studio streams to two RTMP destinations at once', async () => {
 });
 
 await test('guest joins over WebRTC, goes on stage and receives the program', async () => {
-  const guestCtx = await browser.newContext({ permissions: ['camera', 'microphone'] });
+  const guestCtx = await browser.newContext({ permissions: ['camera', 'microphone'], locale: 'en-US' });
   const guest = await guestCtx.newPage();
   await guest.goto(server.invite);
   await guest.fill('input[aria-label="Your name"]', 'Ada');
@@ -204,6 +204,202 @@ await test('guest joins over WebRTC, goes on stage and receives the program', as
   assert.ok(await studio.evaluate((id) => window.streamFree.stage.includes(id), id));
   await guestCtx.close();
   await waitFor(studio, (id) => !window.streamFree.people.has(id), id);
+});
+
+
+// ---------------------------------------------------------------- guests
+
+const sharingStatus = () => api('GET', '/api/sharing');
+
+async function joinGuest(url, name, extra = {}) {
+  const gctx = await browser.newContext({ permissions: ['camera', 'microphone'], locale: 'en-US', ...extra });
+  const page = await gctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(url);
+  await page.fill('input[aria-label="Your name"]', name);
+  await page.click('button[type=submit]');
+  return { ctx: gctx, page, errors };
+}
+
+const guestId = (name) => studio.evaluate((n) => [...window.streamFree.people.values()].find((p) => p.kind === 'guest' && p.name === n)?.id, name);
+
+async function receivesProgram(page, timeout = 20000) {
+  await waitFor(page, () => window.streamFreeGuest.pc?.connectionState === 'connected', null, timeout);
+  await waitFor(page, () => {
+    const v = document.querySelector('#program');
+    return v && v.videoWidth > 0 && v.srcObject?.getAudioTracks().length === 1;
+  }, null, timeout);
+}
+
+await test('three guests at once, each hearing everyone but themselves', async () => {
+  const { inviteUrl } = await sharingStatus();
+  const guests = [];
+  for (const name of ['Ada', 'Grace', 'Linus']) guests.push(await joinGuest(inviteUrl, name));
+  for (const g of guests) await receivesProgram(g.page);
+  const ids = [];
+  for (const name of ['Ada', 'Grace', 'Linus']) {
+    await waitFor(studio, (n) => [...window.streamFree.people.values()].some((p) => p.name === n && p.stream.getAudioTracks().length === 1), name);
+    ids.push(await guestId(name));
+  }
+  for (const id of ids) await studio.evaluate((i) => window.streamFree.toggleStage(i), id);
+  const routing = await studio.evaluate(() => window.streamFree.routing());
+  for (const id of ids) {
+    assert.ok(!routing[id].includes(`guest:${id}`), `guest ${id} must not hear itself: ${routing[id]}`);
+    for (const other of ids.filter((x) => x !== id)) assert.ok(routing[id].includes(`guest:${other}`), `${other} must hear ${id}`);
+    assert.ok(routing[id].includes('program'), 'a guest on stage is in the program');
+    assert.ok(routing.host.includes(`guest:${id}`), 'every guest hears the host');
+  }
+  assert.ok(!routing.host.includes('monitor'), 'the host does not hear their own microphone');
+  for (const g of guests) {
+    assert.deepEqual(g.errors, []);
+    await g.ctx.close();
+  }
+  for (const id of ids) await waitFor(studio, (i) => !window.streamFree.people.has(i), id);
+});
+
+await test('backstage chat works both ways', async () => {
+  const { inviteUrl } = await sharingStatus();
+  const g = await joinGuest(inviteUrl, 'Chatty');
+  await receivesProgram(g.page);
+  await studio.evaluate(() => window.streamFree.sendChat('hello from the host'));
+  await waitFor(g.page, () => document.querySelector('#guest-chat')?.textContent.includes('hello from the host'));
+  await g.page.fill('input[aria-label="Message the host"]', 'hi host');
+  await g.page.press('input[aria-label="Message the host"]', 'Enter');
+  await waitFor(studio, () => window.streamFree.backstageChat.some((m) => m.author === 'Chatty' && m.text === 'hi host'));
+  await g.ctx.close();
+});
+
+await test('the host can remove a guest; a guest can leave and come back', async () => {
+  const { inviteUrl } = await sharingStatus();
+  const g = await joinGuest(inviteUrl, 'Kicked');
+  await receivesProgram(g.page);
+  const id = await guestId('Kicked');
+  await studio.evaluate((i) => window.streamFree.kick(i), id);
+  await waitFor(g.page, () => document.body.textContent.includes('connection to the studio ended'));
+  await waitFor(studio, (i) => !window.streamFree.people.has(i), id);
+  // Leave, then rejoin from the same page.
+  await g.page.click('text=Join again');
+  await g.page.fill('input[aria-label="Your name"]', 'Returning');
+  await g.page.click('button[type=submit]');
+  await receivesProgram(g.page);
+  await waitFor(studio, () => [...window.streamFree.people.values()].some((p) => p.name === 'Returning'));
+  await g.page.click('button[aria-label="Leave"]');
+  await waitFor(g.page, () => document.body.textContent.includes('You left the studio'));
+  await waitFor(studio, () => ![...window.streamFree.people.values()].some((p) => p.name === 'Returning'));
+  await g.ctx.close();
+});
+
+await test('no more than 16 guests can join', async () => {
+  const { inviteUrl } = await sharingStatus();
+  const invite = inviteUrl.split('/join/')[1];
+  const wsUrl = `ws://localhost:${server.port}/ws/guest?invite=${invite}&name=bot`;
+  const open = (url) => new Promise((resolve) => {
+    const ws = new WebSocket(url);
+    ws.onopen = () => resolve({ ws, ok: true });
+    ws.onerror = () => resolve({ ws, ok: false });
+  });
+  const sockets = [];
+  for (let i = 0; i < 16; i++) sockets.push(await open(wsUrl));
+  assert.equal(sockets.filter((s) => s.ok).length, 16, '16 guests are allowed');
+  const extra = await open(wsUrl);
+  assert.equal(extra.ok, false, 'the 17th guest is refused');
+  for (const s of sockets) s.ws.close();
+  await waitFor(studio, () => ![...window.streamFree.people.values()].some((p) => p.kind === 'guest'));
+});
+
+await test('a new invite link replaces the old one', async () => {
+  const before = (await sharingStatus()).inviteUrl;
+  const oldInvite = before.split('/join/')[1];
+  await api('POST', '/api/invite/reset');
+  const after = (await sharingStatus()).inviteUrl;
+  assert.notEqual(after, before);
+  assert.equal((await fetch(before)).status, 404, 'old link is gone');
+  assert.equal((await fetch(after)).status, 200, 'new link works');
+  const refused = await new Promise((resolve) => {
+    const ws = new WebSocket(`ws://localhost:${server.port}/ws/guest?invite=${oldInvite}&name=x`);
+    ws.onopen = () => { ws.close(); resolve(false); };
+    ws.onerror = () => resolve(true);
+  });
+  assert.ok(refused, 'old link cannot join');
+});
+
+await test('guests on the local network join over HTTPS', async () => {
+  const status = await api('PUT', '/api/sharing', { mode: 'lan' });
+  assert.equal(status.mode, 'lan');
+  assert.ok(status.inviteUrl.startsWith('https://'), status.inviteUrl);
+  const g = await joinGuest(status.inviteUrl, 'Lan', { ignoreHTTPSErrors: true });
+  await receivesProgram(g.page);
+  await g.ctx.close();
+  const back = await api('PUT', '/api/sharing', { mode: 'local' });
+  assert.equal(back.mode, 'local');
+  assert.ok(back.inviteUrl.startsWith('http://localhost'), 'back to local');
+});
+
+await test('guests on the internet join through the tunnel', async () => {
+  let status = await api('PUT', '/api/sharing', { mode: 'internet' });
+  if (!status.cloudflared) {
+    await api('PUT', '/api/sharing', { mode: 'local' });
+    console.log('     note: cloudflared is not installed, so the internet link was not exercised');
+    return;
+  }
+  for (let i = 0; i < 60 && status.tunnel.state === 'starting'; i++) {
+    await sleep(1000);
+    status = await sharingStatus();
+  }
+  assert.equal(status.tunnel.state, 'on', `tunnel: ${JSON.stringify(status.tunnel)}`);
+  assert.ok(status.inviteUrl.includes('.trycloudflare.com/join/'), status.inviteUrl);
+  // A fresh quick tunnel can take a few seconds to resolve in DNS.
+  for (let i = 0; i < 20; i++) {
+    const r = await fetch(status.inviteUrl).catch(() => null);
+    if (r?.status === 200) break;
+    await sleep(1500);
+  }
+  const g = await joinGuest(status.inviteUrl, 'Remote');
+  await receivesProgram(g.page, 40000);
+  await g.ctx.close();
+  const back = await api('PUT', '/api/sharing', { mode: 'local' });
+  assert.equal(back.tunnel.state, 'off');
+});
+
+await test('invite window shows the QR code and share options', async () => {
+  await studio.evaluate(() => window.streamFree.inviteDialog());
+  await waitFor(studio, () => document.querySelector('#dialog img.qr')?.naturalWidth > 0);
+  const labels = await studio.$$eval('#dialog .share-row > *', (els) => els.map((e) => e.textContent));
+  assert.deepEqual(labels, ['Copy invitation', 'WhatsApp', 'Telegram', 'Email']);
+  await studio.keyboard.press('Escape');
+});
+
+await test('the studio speaks Italian when the system does', async () => {
+  const itCtx = await browser.newContext({ permissions: ['camera', 'microphone'], locale: 'it-IT' });
+  const page = await itCtx.newPage();
+  await page.goto(`${server.base}/?t=${server.token}`);
+  await waitFor(page, () => document.querySelector('#live-btn')?.textContent === 'Vai in diretta');
+  assert.equal(await page.textContent('#record-btn'), 'Registra');
+  await itCtx.close();
+});
+
+await test('every interface string has an Italian translation', async () => {
+  const { IT } = await import('../../web/js/i18n.js');
+  const { readFileSync } = await import('node:fs');
+  const used = new Set();
+  for (const f of ['studio.js', 'guest.js', 'help.js']) {
+    const src = readFileSync(join(ROOT, 'web/js', f), 'utf8');
+    for (const m of src.matchAll(/\bt\(\s*'((?:[^'\\]|\\.)*)'/g)) used.add(m[1].replace(/\\'/g, "'"));
+  }
+  const { LAYOUTS } = await import('../../web/js/layouts.js');
+  for (const l of LAYOUTS) used.add(l.label);
+  const missing = [...used].filter((k) => !(k in IT));
+  const unused = Object.keys(IT).filter((k) => !used.has(k));
+  assert.deepEqual(missing, [], 'missing Italian translations');
+  assert.deepEqual(unused, [], 'unused Italian translations');
+});
+
+await test('program style options render without errors', async () => {
+  await studio.evaluate(() => window.streamFree.setStyle({ font: 'serif', namePos: 'tl', bannerStyle: 'glass', bannerPos: 'center', spacing: 2.5, tickerBg: '#000000' }));
+  await studio.evaluate(() => window.streamFree.showBanner('Styled', 'banner'));
+  await sleep(800);
+  await studio.evaluate(() => window.streamFree.setStyle({ font: 'sans', namePos: 'bl', bannerStyle: 'solid', bannerPos: 'left', spacing: 1, tickerBg: '' }));
 });
 
 await test('stream keeps its frame rate with another tab in front', async () => {

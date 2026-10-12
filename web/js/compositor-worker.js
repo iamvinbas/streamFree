@@ -9,7 +9,7 @@
 
 import { computeLayout } from './layouts.js';
 
-const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+const DEFAULT_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 
 const sources = new Map(); // id -> { reader, frame }
 const images = new Map(); // id -> ImageBitmap
@@ -66,12 +66,33 @@ function roundRect(r, radius) {
 }
 
 function theme() {
+  const th = scene.theme || {};
   return {
-    primary: scene.theme?.primary || '#6d5efc',
-    text: scene.theme?.text || '#ffffff',
-    style: scene.theme?.style || 'pill',
-    radius: scene.theme?.radius ?? 0.012,
+    primary: th.primary || '#6d5efc',
+    text: th.text || '#ffffff',
+    style: th.style || 'pill',
+    radius: th.radius ?? 0.012,
+    namePos: th.namePos || 'bl',
+    bannerStyle: th.bannerStyle || 'solid',
+    bannerPos: th.bannerPos || 'left',
+    tickerBg: th.tickerBg || th.primary || '#6d5efc',
+    tickerText: th.tickerText || th.text || '#ffffff',
+    spacing: th.spacing ?? 1,
   };
+}
+
+function font() {
+  return scene.theme?.fontStack || DEFAULT_FONT;
+}
+
+/** `hex` mixed towards black (amount < 0) or white (amount > 0). */
+function shade(hex, amount) {
+  const n = parseInt((hex || '#6d5efc').slice(1), 16);
+  const mix = (c) => Math.round(amount < 0 ? c * (1 + amount) : c + (255 - c) * amount);
+  const r = mix((n >> 16) & 255);
+  const g = mix((n >> 8) & 255);
+  const b = mix(n & 255);
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function drawPlaceholder(r, name) {
@@ -84,7 +105,7 @@ function drawPlaceholder(r, name) {
   ctx.arc(r.x + r.w / 2, r.y + r.h / 2, d / 2, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = t.text;
-  ctx.font = `600 ${Math.round(d * 0.45)}px ${FONT}`;
+  ctx.font = `600 ${Math.round(d * 0.45)}px ${font()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText((name || '?').trim().charAt(0).toUpperCase(), r.x + r.w / 2, r.y + r.h / 2);
@@ -96,12 +117,14 @@ function drawNameTag(r, name) {
   if (!name || scene.showNames === false) return;
   const t = theme();
   const size = Math.max(12, Math.round(Math.min(r.h * 0.07, height * 0.032)));
-  ctx.font = `600 ${size}px ${FONT}`;
+  ctx.font = `600 ${size}px ${font()}`;
   const tw = ctx.measureText(name).width;
   const padX = size * 0.6;
   const h = size * 1.7;
-  const x = r.x + size * 0.5;
-  const y = r.y + r.h - h - size * 0.5;
+  const w = tw + padX * 2;
+  const margin = size * 0.5;
+  const x = t.namePos === 'bc' ? r.x + (r.w - w) / 2 : r.x + margin;
+  const y = t.namePos === 'tl' ? r.y + margin : r.y + r.h - h - margin;
   if (t.style === 'minimal') {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.fillRect(x, y, tw + padX * 2, h);
@@ -177,30 +200,55 @@ function drawBanner(now, bottom) {
   const p = easeOut((now - bannerSince) / 450);
   const titleSize = Math.round(height * 0.042);
   const subSize = Math.round(height * 0.028);
-  ctx.font = `700 ${titleSize}px ${FONT}`;
+  ctx.font = `700 ${titleSize}px ${font()}`;
   const tw = ctx.measureText(b.title || '').width;
-  ctx.font = `500 ${subSize}px ${FONT}`;
+  ctx.font = `500 ${subSize}px ${font()}`;
   const sw = ctx.measureText(b.subtitle || '').width;
   const padX = titleSize * 0.7;
   const w = Math.min(width * 0.8, Math.max(tw, sw) + padX * 2);
   const h = (b.title ? titleSize * 1.5 : 0) + (b.subtitle ? subSize * 1.6 : 0) + titleSize * 0.4;
-  const x = height * 0.04 - (1 - p) * (w + height * 0.05);
-  const y = bottom - h - height * 0.04;
+  const centered = t.bannerPos === 'center';
+  // Left banners slide in from the side, centered ones rise from below.
+  const x = centered ? (width - w) / 2 : height * 0.04 - (1 - p) * (w + height * 0.05);
+  const y = bottom - h - height * 0.04 + (centered ? (1 - p) * height * 0.06 : 0);
+  const radius = height * 0.008;
   ctx.globalAlpha = p;
-  ctx.fillStyle = t.primary;
   ctx.beginPath();
-  ctx.roundRect(x, y, w, h, height * 0.008);
-  ctx.fill();
-  ctx.fillStyle = t.text;
+  ctx.roundRect(x, y, w, h, radius);
+  let textColor = t.text;
+  if (t.bannerStyle === 'gradient') {
+    const g = ctx.createLinearGradient(x, y, x + w, y + h);
+    g.addColorStop(0, shade(t.primary, 0.12));
+    g.addColorStop(1, shade(t.primary, -0.35));
+    ctx.fillStyle = g;
+    ctx.fill();
+  } else if (t.bannerStyle === 'outline') {
+    ctx.fillStyle = 'rgba(10, 12, 18, 0.62)';
+    ctx.fill();
+    ctx.lineWidth = Math.max(2, height * 0.004);
+    ctx.strokeStyle = t.primary;
+    ctx.stroke();
+    textColor = '#ffffff';
+  } else if (t.bannerStyle === 'glass') {
+    ctx.fillStyle = 'rgba(15, 17, 23, 0.55)';
+    ctx.fill();
+    ctx.fillStyle = t.primary;
+    ctx.fillRect(x, y + radius, Math.max(4, height * 0.007), h - radius * 2);
+    textColor = '#ffffff';
+  } else {
+    ctx.fillStyle = t.primary;
+    ctx.fill();
+  }
+  ctx.fillStyle = textColor;
   let ty = y + titleSize * 0.3;
   if (b.title) {
-    ctx.font = `700 ${titleSize}px ${FONT}`;
+    ctx.font = `700 ${titleSize}px ${font()}`;
     ctx.textBaseline = 'top';
     ctx.fillText(b.title, x + padX, ty + titleSize * 0.15, w - padX * 2);
     ty += titleSize * 1.5;
   }
   if (b.subtitle) {
-    ctx.font = `500 ${subSize}px ${FONT}`;
+    ctx.font = `500 ${subSize}px ${font()}`;
     ctx.globalAlpha = p * 0.9;
     ctx.fillText(b.subtitle, x + padX, ty, w - padX * 2);
   }
@@ -222,7 +270,7 @@ function drawComment(now, bottom) {
   const textSize = Math.round(height * 0.034);
   const w = width * 0.46;
   const pad = textSize * 0.8;
-  ctx.font = `500 ${textSize}px ${FONT}`;
+  ctx.font = `500 ${textSize}px ${font()}`;
   const lines = wrapLines(c.text, w - pad * 2, 3);
   const h = pad * 1.6 + nameSize * 1.3 + lines.length * textSize * 1.3;
   const x = height * 0.04;
@@ -235,11 +283,11 @@ function drawComment(now, bottom) {
   ctx.fillStyle = t.primary;
   ctx.fillRect(x, y + height * 0.012, height * 0.006, h - height * 0.024);
   ctx.textBaseline = 'top';
-  ctx.font = `700 ${nameSize}px ${FONT}`;
+  ctx.font = `700 ${nameSize}px ${font()}`;
   ctx.fillStyle = c.color || t.primary;
   const platform = c.platform ? `  ·  ${c.platform}` : '';
   ctx.fillText(`${c.author}${platform}`, x + pad, y + pad * 0.8, w - pad * 2);
-  ctx.font = `500 ${textSize}px ${FONT}`;
+  ctx.font = `500 ${textSize}px ${font()}`;
   ctx.fillStyle = '#16181f';
   lines.forEach((line, i) => ctx.fillText(line, x + pad, y + pad * 0.8 + nameSize * 1.3 + i * textSize * 1.3));
   ctx.textBaseline = 'alphabetic';
@@ -259,10 +307,10 @@ function drawTicker(now) {
   const size = Math.round(height * 0.032);
   const h = size * 1.8;
   const y = height - h;
-  ctx.fillStyle = t.primary;
+  ctx.fillStyle = t.tickerBg;
   ctx.fillRect(0, y, width, h);
-  ctx.font = `600 ${size}px ${FONT}`;
-  ctx.fillStyle = t.text;
+  ctx.font = `600 ${size}px ${font()}`;
+  ctx.fillStyle = t.tickerText;
   const text = `${tk.text}     •     `;
   const tw = ctx.measureText(text).width;
   const speed = (tk.speed || 1) * height * 0.12; // px per second
@@ -303,7 +351,7 @@ function drawProgram(now) {
 
   const stage = (scene.stage || []).filter((id) => sources.has(id) || scene.names?.[id]);
   const screenId = scene.screen && sources.has(scene.screen) ? scene.screen : null;
-  const layout = computeLayout(scene.layout, stage.length, !!screenId, width, height);
+  const layout = computeLayout(scene.layout, stage.length, !!screenId, width, height, theme().spacing);
   if (screenId && layout.screen) drawTile(screenId, layout.screen, true);
   layout.cams.forEach((r, i) => drawTile(stage[i], r, false));
 

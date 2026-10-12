@@ -59,6 +59,19 @@ pub struct IceServer {
     pub credential: Option<String>,
 }
 
+/// Who can open the invite link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SharingMode {
+    /// Only this computer (http://localhost).
+    #[default]
+    Local,
+    /// Devices on the same network, over HTTPS with a self-signed certificate.
+    Lan,
+    /// Anyone with the link, through a Cloudflare quick tunnel.
+    Internet,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub host_token: String,
@@ -67,6 +80,8 @@ pub struct Settings {
     pub destinations: Vec<Destination>,
     #[serde(default = "default_ice")]
     pub ice_servers: Vec<IceServer>,
+    #[serde(default)]
+    pub sharing_mode: SharingMode,
     /// Opaque studio state owned by the web UI.
     #[serde(default)]
     pub studio: serde_json::Value,
@@ -93,6 +108,7 @@ impl Default for Settings {
             invite_token: random_token(),
             destinations: Vec::new(),
             ice_servers: default_ice(),
+            sharing_mode: SharingMode::Local,
             studio: serde_json::Value::Null,
         }
     }

@@ -144,9 +144,23 @@ The server answers with `started`, then a `status` message every second
 - The Rust server only relays signaling messages between the host and guests;
   guests cannot address each other.
 - Cameras require a secure context, so guests need HTTPS unless they are on
-  `localhost`: `--lan` serves HTTPS with a self-signed certificate,
-  `--tunnel` runs a Cloudflare quick tunnel, `--public-url` documents your own
-  reverse proxy.
+  `localhost`. The Invite window sets the **sharing mode** (`src/sharing.rs`),
+  which can change while streamFree runs and is remembered in the settings:
+  - *This computer*: only `http://localhost`.
+  - *Local network*: an extra HTTPS listener on port + 1 with a self-signed
+    certificate made on first use (`src/net.rs`), stopped when the mode changes.
+  - *Internet*: a Cloudflare quick tunnel (`cloudflared`), started in the
+    background; the studio is notified when the public address is ready, if it
+    fails, or if the tunnel stops later. cloudflared is looked up in PATH and in
+    the usual Homebrew and Windows install folders, because apps started from
+    Finder or the Start menu do not inherit the shell's PATH.
+  `--lan`, `--tunnel` and `--public-url` (own reverse proxy) override the mode
+  for one run. The invite link is also served as a QR code (`/api/invite/qr.svg`).
+- **Test** in Destinations connects to the server and runs the RTMP `connect`
+  command without publishing (`Publisher::check`), which catches wrong server
+  addresses. Platforms check the stream key only at `publish`; they reject a
+  wrong key by closing the connection, which streamFree reports as a refused
+  stream with a hint to check the key.
 
 ## Security model
 

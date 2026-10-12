@@ -73,11 +73,12 @@ function column(n, area, gap) {
  * @param {boolean} hasScreen whether a screen share or media clip is featured
  * @param {number} W output width
  * @param {number} H output height
+ * @param {number} spacing multiplier for the outer margin and the gaps
  * @returns {{screen: object|null, cams: object[]}}
  */
-export function computeLayout(layout, cams, hasScreen, W, H) {
-  const pad = H * PAD;
-  const gap = H * GAP;
+export function computeLayout(layout, cams, hasScreen, W, H, spacing = 1) {
+  const pad = H * PAD * spacing;
+  const gap = H * GAP * spacing;
   const full = rect(0, 0, W, H);
   const inner = { x: pad, y: pad, w: W - 2 * pad, h: H - 2 * pad };
   let id = layout;

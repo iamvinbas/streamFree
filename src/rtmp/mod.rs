@@ -195,7 +195,31 @@ impl Publisher {
             .map_err(|_| anyhow!("timed out connecting to {}", target.host))?
     }
 
-    async fn connect_inner(target: &Target) -> Result<Self> {
+    /// Checks that the server accepts a connection to the target's
+    /// application, without publishing anything. Returns the server's name
+    /// when it reports one. Stream keys are only checked when publishing.
+    pub async fn check(target: &Target) -> Result<String> {
+        tokio::time::timeout(SETUP_TIMEOUT, async {
+            let (p, values) = Self::establish(target).await?;
+            let server = values
+                .get(2)
+                .and_then(|v| v.get("fmsVer"))
+                .and_then(Amf::as_str)
+                .unwrap_or("RTMP server")
+                .to_owned();
+            p.disconnect().await;
+            Ok(server)
+        })
+        .await
+        .map_err(|_| anyhow!("timed out connecting to {}", target.host))?
+    }
+
+    async fn disconnect(mut self) {
+        let _ = self.writer.shutdown().await;
+    }
+
+    /// TCP (+TLS), handshake and `connect`. Returns the `_result` values.
+    async fn establish(target: &Target) -> Result<(Self, Vec<Amf>)> {
         let mut stream = open(target).await?;
         handshake(&mut stream).await?;
         let (reader, writer) = tokio::io::split(stream);
@@ -234,33 +258,43 @@ impl Publisher {
             0,
         );
         p.flush().await?;
-        p.expect_result(1.0).await.context("connect rejected")?;
+        let result = p.expect_result(1.0).await.context("connect rejected")?;
+        Ok((p, result))
+    }
 
-        let key = target.stream_key.clone();
-        p.command("releaseStream", vec![Amf::Null, Amf::str(&key)], 0);
-        p.command("FCPublish", vec![Amf::Null, Amf::str(&key)], 0);
-        let create_tid = p.transaction;
-        p.command("createStream", vec![Amf::Null], 0);
-        p.flush().await?;
-        let result = p
+    async fn connect_inner(target: &Target) -> Result<Self> {
+        let (mut p, _) = Self::establish(target).await?;
+        // Platforms reject a wrong or expired stream key by closing the
+        // connection at this point, without an error message.
+        p.publish(&target.stream_key).await.context(
+            "the server refused the stream: check the stream key, and that your channel or live event is ready",
+        )?;
+        Ok(p)
+    }
+
+    async fn publish(&mut self, key: &str) -> Result<()> {
+        self.command("releaseStream", vec![Amf::Null, Amf::str(key)], 0);
+        self.command("FCPublish", vec![Amf::Null, Amf::str(key)], 0);
+        let create_tid = self.transaction;
+        self.command("createStream", vec![Amf::Null], 0);
+        self.flush().await?;
+        let result = self
             .expect_result(create_tid)
             .await
             .context("createStream rejected")?;
-        p.stream_id = result
+        self.stream_id = result
             .get(3)
             .and_then(Amf::as_number)
             .ok_or_else(|| anyhow!("createStream returned no stream id"))?
             as u32;
-
-        let stream_id = p.stream_id;
-        p.command(
+        let stream_id = self.stream_id;
+        self.command(
             "publish",
-            vec![Amf::Null, Amf::str(&key), Amf::str("live")],
+            vec![Amf::Null, Amf::str(key), Amf::str("live")],
             stream_id,
         );
-        p.flush().await?;
-        p.expect_publish_start().await?;
-        Ok(p)
+        self.flush().await?;
+        self.expect_publish_start().await
     }
 
     fn queue(&mut self, csid: u32, msg_type: u8, stream_id: u32, timestamp: u32, payload: &[u8]) {

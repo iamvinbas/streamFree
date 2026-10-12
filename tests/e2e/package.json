@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Browser end-to-end tests for streamFree (real Chrome, fake camera and microphone).",
   "scripts": {
-    "test": "node run.mjs"
+    "test": "node run.mjs",
+    "test:native": "node native.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.58.2"

@@ -44,8 +44,14 @@ pub struct AppState {
     pub store: Mutex<Store>,
     pub recordings_dir: PathBuf,
     pub local_url: String,
-    pub lan_url: RwLock<Option<String>>,
+    /// Settings directory (LAN certificate lives here).
+    pub data_dir: PathBuf,
+    /// Port of the local studio; the LAN listener uses port + 1.
+    pub port: u16,
+    /// Base URL of the host's own HTTPS proxy (--public-url), if any.
     pub public_url: RwLock<Option<String>>,
+    pub sharing: Mutex<crate::sharing::Sharing>,
+    router: std::sync::OnceLock<Router>,
     host_tx: Mutex<Option<mpsc::Sender<String>>>,
     guests: Mutex<HashMap<String, Guest>>,
     events: broadcast::Sender<Value>,
@@ -59,14 +65,17 @@ pub struct AppState {
 pub type Shared = Arc<AppState>;
 
 impl AppState {
-    pub fn new(store: Store, recordings_dir: PathBuf, local_url: String) -> Shared {
+    pub fn new(store: Store, recordings_dir: PathBuf, data_dir: PathBuf, port: u16) -> Shared {
         let (events, _) = broadcast::channel(256);
         Arc::new(Self {
             store: Mutex::new(store),
             recordings_dir,
-            local_url,
-            lan_url: RwLock::new(None),
+            local_url: format!("http://localhost:{port}"),
+            data_dir,
+            port,
             public_url: RwLock::new(None),
+            sharing: Mutex::new(crate::sharing::Sharing::default()),
+            router: std::sync::OnceLock::new(),
             host_tx: Mutex::new(None),
             guests: Mutex::new(HashMap::new()),
             events,
@@ -81,14 +90,30 @@ impl AppState {
         format!("{}/?t={token}", self.local_url)
     }
 
+    /// The router, for listeners started later (the LAN listener).
+    pub fn set_router(&self, router: Router) {
+        let _ = self.router.set(router);
+    }
+
+    pub fn router(&self) -> Option<Router> {
+        self.router.get().cloned()
+    }
+
+    /// Sends an event to the open studio pages.
+    pub fn emit(&self, value: Value) {
+        let _ = self.events.send(value);
+    }
+
     pub async fn invite_url(&self) -> String {
-        let base = match (
-            self.public_url.read().await.clone(),
-            self.lan_url.read().await.clone(),
-        ) {
-            (Some(public), _) => public,
-            (None, Some(lan)) => lan,
-            (None, None) => self.local_url.clone(),
+        let custom = self.public_url.read().await.clone();
+        let base = match custom {
+            Some(url) => url,
+            None => self
+                .sharing
+                .lock()
+                .await
+                .guest_base()
+                .unwrap_or_else(|| self.local_url.clone()),
         };
         let invite = self.store.lock().await.settings.invite_token.clone();
         format!("{}/join/{invite}", base.trim_end_matches('/'))
@@ -136,6 +161,9 @@ pub fn router(state: Shared) -> Router {
             "/api/destinations/{id}",
             axum::routing::delete(delete_destination),
         )
+        .route("/api/destinations/{id}/test", post(test_destination))
+        .route("/api/sharing", get(get_sharing).put(put_sharing))
+        .route("/api/invite/qr.svg", get(invite_qr))
         .route("/api/studio", get(get_studio).put(put_studio))
         .route("/api/ice", put(put_ice))
         .route("/api/invite/reset", post(reset_invite))
@@ -254,12 +282,101 @@ async fn info(
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "inviteUrl": state.invite_url().await,
-        "publicUrl": state.public_url.read().await.clone(),
-        "lanUrl": state.lan_url.read().await.clone(),
+        "sharing": crate::sharing::status(&state).await,
         "recordingsDir": state.recordings_dir.display().to_string(),
         "iceServers": ice,
     }))
     .into_response()
+}
+
+async fn get_sharing(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Response {
+    require_host!(state, headers, q);
+    Json(crate::sharing::status(&state).await).into_response()
+}
+
+#[derive(Deserialize)]
+struct SharingInput {
+    mode: crate::store::SharingMode,
+}
+
+async fn put_sharing(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Json(input): Json<SharingInput>,
+) -> Response {
+    require_host!(state, headers, q);
+    {
+        let mut store = state.store.lock().await;
+        store.settings.sharing_mode = input.mode;
+        if let Err(e) = store.save() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")).into_response();
+        }
+    }
+    crate::sharing::set_mode(&state, input.mode).await;
+    Json(crate::sharing::status(&state).await).into_response()
+}
+
+/// QR code of the invite link, so guests can join from a phone.
+async fn invite_qr(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Response {
+    require_host!(state, headers, q);
+    let url = state.invite_url().await;
+    match qrcode::QrCode::new(url.as_bytes()) {
+        Ok(code) => {
+            let svg = code
+                .render::<qrcode::render::svg::Color>()
+                .min_dimensions(240, 240)
+                .dark_color(qrcode::render::svg::Color("#1a1530"))
+                .light_color(qrcode::render::svg::Color("#ffffff"))
+                .build();
+            (
+                [
+                    (header::CONTENT_TYPE, "image/svg+xml"),
+                    (header::CACHE_CONTROL, "no-store"),
+                ],
+                svg,
+            )
+                .into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Connects to a destination's server without going live, to catch a wrong
+/// server address before the show.
+async fn test_destination(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Response {
+    require_host!(state, headers, q);
+    let target = {
+        let store = state.store.lock().await;
+        let Some(dest) = store.settings.destinations.iter().find(|d| d.id == id) else {
+            return (StatusCode::NOT_FOUND, "no such destination").into_response();
+        };
+        match Target::parse(&dest.url, &dest.key) {
+            Ok(t) => t,
+            Err(e) => {
+                return Json(json!({"ok": false, "message": format!("{e:#}")})).into_response()
+            }
+        }
+    };
+    match crate::rtmp::Publisher::check(&target).await {
+        Ok(server) => {
+            Json(json!({"ok": true, "server": server, "host": target.host})).into_response()
+        }
+        Err(e) => Json(json!({"ok": false, "message": format!("{e:#}")})).into_response(),
+    }
 }
 
 async fn list_destinations(

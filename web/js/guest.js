@@ -2,12 +2,18 @@
 // watch the program and talk to the host. Works in any modern browser.
 
 import { h, icon, toast, applyTheme } from './util.js';
+import { t, setLang, detectLang } from './i18n.js';
 
 applyTheme();
+// Guests see the page in their own browser's language.
+setLang(detectLang());
+document.title = t('Join streamFree');
 
 const invite = decodeURIComponent(location.pathname.split('/').pop() || '');
 const app = document.querySelector('#app');
 let local = null;
+// Resolves when the camera and microphone are ready (or definitely not).
+let mediaReady = Promise.resolve();
 let ws = null;
 let pc = null;
 let micOn = true;
@@ -37,10 +43,10 @@ async function getMedia(camId, micId) {
     try {
       local = await navigator.mediaDevices.getUserMedia({ audio: true });
       camOn = false;
-      toast(`Camera unavailable (${e.message}); joining with audio only.`, 'error');
+      toast(t('Camera unavailable ({error}); joining with audio only.', { error: e.message }), 'error');
     } catch (e2) {
       local = new MediaStream();
-      toast(`Camera and microphone unavailable: ${e2.message}`, 'error');
+      toast(t('Camera and microphone unavailable: {error}', { error: e2.message }), 'error');
     }
   }
   return local;
@@ -48,16 +54,17 @@ async function getMedia(camId, micId) {
 
 async function lobby() {
   if (!window.isSecureContext) {
-    app.replaceChildren(h('main', { class: 'fatal' }, h('h1', {}, 'Secure link needed'),
-      h('p', {}, 'Browsers only allow cameras on https:// pages. Ask the host to start streamFree with --lan or --tunnel and send you the new link.')));
+    app.replaceChildren(h('main', { class: 'fatal' }, h('h1', {}, t('Secure link needed')),
+      h('p', {}, t('Browsers only allow cameras on secure (https://) pages. Ask the host to choose Local network or Internet in the Invite window and send you the new link.'))));
     return;
   }
   const preview = h('video', { autoplay: true, muted: true, playsInline: true, class: 'mirror' });
-  const name = h('input', { placeholder: 'Your name', value: savedName(), maxLength: 40, required: true, 'aria-label': 'Your name' });
-  const camSel = h('select', { 'aria-label': 'Camera' });
-  const micSel = h('select', { 'aria-label': 'Microphone' });
+  const name = h('input', { placeholder: t('Your name'), value: savedName(), maxLength: 40, required: true, 'aria-label': t('Your name') });
+  const camSel = h('select', { 'aria-label': t('Camera') });
+  const micSel = h('select', { 'aria-label': t('Microphone') });
   const refresh = async () => {
-    preview.srcObject = await getMedia(camSel.value, micSel.value);
+    mediaReady = getMedia(camSel.value, micSel.value);
+    preview.srcObject = await mediaReady;
     const list = await navigator.mediaDevices.enumerateDevices();
     const fill = (sel, kind) => {
       const current = sel.value;
@@ -71,7 +78,7 @@ async function lobby() {
   app.replaceChildren(
     h('main', { class: 'lobby' },
       h('div', { class: 'lobby-card' },
-        h('h1', {}, 'Join the studio'),
+        h('h1', {}, t('Join the studio')),
         h('div', { class: 'lobby-preview' }, preview),
         h('form', {
           class: 'stack', onsubmit: (e) => {
@@ -81,13 +88,13 @@ async function lobby() {
             } catch {
               // not saved
             }
-            join(name.value.trim() || 'Guest');
+            join(name.value.trim() || t('Guest'));
           },
         },
-        h('label', { class: 'field' }, h('span', {}, 'Name'), name),
-        h('div', { class: 'row' }, h('label', { class: 'field' }, h('span', {}, 'Camera'), camSel), h('label', { class: 'field' }, h('span', {}, 'Microphone'), micSel)),
-        h('p', { class: 'muted' }, 'Use headphones to avoid echo. The host decides when you appear on screen.'),
-        h('button', { class: 'btn primary big', type: 'submit' }, 'Enter backstage')))),
+        h('label', { class: 'field' }, h('span', {}, t('Name')), name),
+        h('div', { class: 'row' }, h('label', { class: 'field' }, h('span', {}, t('Camera')), camSel), h('label', { class: 'field' }, h('span', {}, t('Microphone')), micSel)),
+        h('p', { class: 'muted' }, t('Use headphones to avoid echo. The host decides when you appear on screen.')),
+        h('button', { class: 'btn primary big', type: 'submit' }, t('Enter backstage'))))),
   );
   await refresh();
 }
@@ -96,7 +103,11 @@ function sendSignal(msg) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
-function join(name) {
+async function join(name) {
+  // The host's offer needs our tracks: never connect before they exist,
+  // even if the guest clicks while the permission prompt is still open.
+  await mediaReady;
+  if (!local) local = await getMedia('', '');
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws/guest?invite=${encodeURIComponent(invite)}&name=${encodeURIComponent(name)}`);
   ws.onmessage = (e) => {
@@ -107,7 +118,7 @@ function join(name) {
   ws.onclose = () => {
     pc?.close();
     local?.getTracks().forEach((t) => t.stop());
-    if (!leaving) ended('The connection to the studio ended. The host may have removed you or closed the studio.');
+    if (!leaving) ended(t('The connection to the studio ended. The host may have removed you or closed the studio.'));
   };
   renderRoom(name);
 }
@@ -150,10 +161,10 @@ async function onMessage(m) {
     case 'stage':
       onStage = !!m.onStage;
       setStatus();
-      toast(onStage ? 'You are on stage: viewers can see and hear you.' : 'You are backstage.');
+      toast(onStage ? t('You are on stage: viewers can see and hear you.') : t('You are backstage.'));
       break;
     case 'chat':
-      chat.push({ author: m.author || 'Host', text: m.text });
+      chat.push({ author: m.author || t('Host'), text: m.text });
       renderChat();
       break;
   }
@@ -165,11 +176,11 @@ function setStatus() {
   const state = pc?.connectionState;
   if (state && state !== 'connected') {
     el.className = 'pill';
-    el.textContent = state === 'failed' ? 'Connection failed — the host may need a TURN server' : 'Connecting…';
+    el.textContent = state === 'failed' ? t('Connection failed: the host may need to add a TURN server') : t('Connecting…');
     return;
   }
   el.className = `pill ${onStage ? 'live' : ''}`;
-  el.textContent = onStage ? 'On stage' : 'Backstage';
+  el.textContent = onStage ? t('On stage') : t('Backstage');
 }
 
 function renderChat() {
@@ -186,60 +197,60 @@ function renderRoom(name) {
   const drawControls = () => {
     controls.replaceChildren(
       h('button', {
-        class: `ctl ${micOn ? '' : 'active'}`, 'aria-label': micOn ? 'Mute' : 'Unmute', onclick: () => {
+        class: `ctl ${micOn ? '' : 'active'}`, 'aria-label': micOn ? t('Mute') : t('Unmute'), onclick: () => {
           micOn = !micOn;
           local.getAudioTracks().forEach((t) => (t.enabled = micOn));
           sendSignal({ type: 'state', micOn });
           drawControls();
         },
-      }, icon(micOn ? 'mic' : 'micOff'), h('small', {}, micOn ? 'Mute' : 'Unmute')),
+      }, icon(micOn ? 'mic' : 'micOff'), h('small', {}, micOn ? t('Mute') : t('Unmute'))),
       h('button', {
-        class: `ctl ${camOn ? '' : 'active'}`, 'aria-label': camOn ? 'Stop camera' : 'Start camera', onclick: () => {
+        class: `ctl ${camOn ? '' : 'active'}`, 'aria-label': camOn ? t('Stop cam') : t('Start cam'), onclick: () => {
           camOn = !camOn;
           local.getVideoTracks().forEach((t) => (t.enabled = camOn));
           sendSignal({ type: 'state', camOn });
           drawControls();
         },
-      }, icon(camOn ? 'cam' : 'camOff'), h('small', {}, camOn ? 'Stop cam' : 'Start cam')),
+      }, icon(camOn ? 'cam' : 'camOff'), h('small', {}, camOn ? t('Stop cam') : t('Start cam'))),
       h('button', {
-        class: 'ctl danger', 'aria-label': 'Leave', onclick: () => {
+        class: 'ctl danger', 'aria-label': t('Leave'), onclick: () => {
           leaving = true;
           ws?.close();
           pc?.close();
           local?.getTracks().forEach((t) => t.stop());
-          ended('You left the studio.');
+          ended(t('You left the studio.'));
         },
-      }, icon('leave'), h('small', {}, 'Leave')),
+      }, icon('leave'), h('small', {}, t('Leave'))),
     );
   };
   drawControls();
-  const input = h('input', { placeholder: 'Message the host', maxLength: 500, 'aria-label': 'Message the host' });
+  const input = h('input', { placeholder: t('Message the host'), maxLength: 500, 'aria-label': t('Message the host') });
   app.replaceChildren(
     h('header', { class: 'topbar' }, h('div', { class: 'brand' }, h('img', { src: '/static/favicon.svg', alt: '', width: 24, height: 24 }), 'streamFree'),
-      h('div', { class: 'status' }, h('span', { id: 'guest-status', class: 'pill' }, 'Connecting…')), h('div', {}, name)),
+      h('div', { class: 'status' }, h('span', { id: 'guest-status', class: 'pill' }, t('Connecting…'))), h('div', {}, name)),
     h('main', { class: 'guest-room' },
       h('section', { class: 'stage-col' },
-        h('div', { class: 'preview-wrap' }, h('video', { id: 'program', autoplay: true, playsInline: true, 'aria-label': 'Live program' }), self),
+        h('div', { class: 'preview-wrap' }, h('video', { id: 'program', autoplay: true, playsInline: true, 'aria-label': t('Live program') }), self),
         controls),
       h('aside', { class: 'sidebar' },
-        h('section', { class: 'card' }, h('h3', {}, 'Backstage chat'), h('ul', { id: 'guest-chat', class: 'chat' }),
+        h('section', { class: 'card' }, h('h3', {}, t('Backstage chat')), h('ul', { id: 'guest-chat', class: 'chat' }),
           h('form', {
             class: 'row', onsubmit: (e) => {
               e.preventDefault();
               const text = input.value.trim();
               if (!text) return;
               sendSignal({ type: 'chat', text });
-              chat.push({ author: 'You', text });
+              chat.push({ author: t('You'), text });
               input.value = '';
               renderChat();
             },
-          }, input, h('button', { class: 'btn', type: 'submit' }, 'Send'))))),
+          }, input, h('button', { class: 'btn', type: 'submit' }, t('Send')))))),
   );
 }
 
 function ended(message) {
   app.replaceChildren(h('main', { class: 'fatal' }, h('h1', {}, 'streamFree'), h('p', {}, message),
-    h('button', { class: 'btn primary', onclick: () => location.reload() }, 'Join again')));
+    h('button', { class: 'btn primary', onclick: () => location.reload() }, t('Join again'))));
 }
 
 lobby();

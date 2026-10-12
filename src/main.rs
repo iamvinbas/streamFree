@@ -5,7 +5,8 @@ use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
-use streamfree::{app, net, server, store};
+use streamfree::store::SharingMode;
+use streamfree::{app, server, sharing, store};
 
 /// Whether this build has the native desktop window (system WebView).
 const NATIVE_WINDOW: bool = cfg!(any(target_os = "macos", windows));
@@ -138,32 +139,31 @@ async fn setup(
         .recordings_dir
         .clone()
         .unwrap_or_else(store::default_recordings_dir);
-    let local_url = format!("http://localhost:{}", cli.port);
-    let state = server::AppState::new(store, recordings_dir.clone(), local_url);
+    // --lan / --tunnel choose the guest mode for this run; otherwise the
+    // mode chosen in the app last time is restored.
+    let saved_mode = store.settings.sharing_mode;
+    let state = server::AppState::new(
+        store,
+        recordings_dir.clone(),
+        data_dir.to_path_buf(),
+        cli.port,
+    );
     let router = server::router(state.clone());
+    state.set_router(router.clone());
 
     if let Some(url) = cli.public_url.clone() {
         *state.public_url.write().await = Some(url.trim_end_matches('/').to_owned());
     }
-    if cli.lan {
-        match net::serve_lan(router.clone(), data_dir, cli.port + 1).await {
-            Ok(url) => *state.lan_url.write().await = Some(url),
-            Err(e) => tracing::warn!("LAN guests disabled: {e:#}"),
-        }
-    }
-    if cli.tunnel {
-        let state = state.clone();
-        let port = cli.port;
-        tokio::spawn(async move {
-            match net::start_tunnel(port).await {
-                Ok(url) => {
-                    tracing::info!("guests can join from anywhere through {url}");
-                    *state.public_url.write().await = Some(url);
-                    tracing::info!("invite link: {}", state.invite_url().await);
-                }
-                Err(e) => tracing::warn!("tunnel not started: {e:#}"),
-            }
-        });
+    let mode = if cli.tunnel {
+        SharingMode::Internet
+    } else if cli.lan {
+        SharingMode::Lan
+    } else {
+        saved_mode
+    };
+    sharing::set_mode(&state, mode).await;
+    if mode == SharingMode::Internet {
+        println!("  Starting the internet link for guests (cloudflared)…");
     }
 
     let host_url = state.host_url().await;
@@ -284,7 +284,7 @@ async fn run_in_browser(cli: Cli, data_dir: PathBuf, app_mode: bool) -> Result<(
     if let Some(mut window) = window {
         let _ = window.kill().await;
     }
-    net::stop_tunnel().await;
+    sharing::shutdown(&state).await;
     Ok(())
 }
 
