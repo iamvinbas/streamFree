@@ -1,144 +1,193 @@
 <div align="center">
 
-<img src="web/favicon.svg" width="72" height="72" alt="">
+<img src="packaging/icons/icon.svg" width="96" height="96" alt="">
 
 # streamFree
 
-**A free, local, open-source live-streaming studio.**
-Invite guests from a link, add your branding, and stream to YouTube, Twitch,
-Facebook and any RTMP server at once, while recording to your computer.
-One small download, no account, no watermark, no time limits.
+**The free live-streaming studio that runs on your computer.**
 
-**[Website and downloads](https://iamvinbas.github.io/streamFree/)** · **English** · [Italiano](README.it.md)
+Invite guests from a link, add your branding, stream to YouTube, Twitch, Facebook
+and any RTMP server at once, and record to MP4. A desktop app under 5 MB,
+with no account, no subscription and no watermark.
+
+[![Latest release](https://img.shields.io/github/v/release/iamvinbas/streamFree?color=6d5efc)](https://github.com/iamvinbas/streamFree/releases/latest)
+[![CI](https://github.com/iamvinbas/streamFree/actions/workflows/ci.yml/badge.svg)](https://github.com/iamvinbas/streamFree/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-6d5efc)](LICENSE)
+
+**[Website](https://iamvinbas.github.io/streamFree/)** · **[Download](#download)** · **English** · [Italiano](README.it.md)
 
 </div>
 
-![streamFree studio with two people on stage, a banner and the branding panel](docs/assets/studio.png)
+![The streamFree studio: two people on stage, a lower-third banner, a ticker and the banners panel](docs/assets/studio.png)
 
-## Features
+## Download
 
-- **Browser studio** on your own computer: camera, microphone, screen sharing with its audio, video clips.
-- **Guests join from a link** in any modern browser, nothing to install. They wait backstage until you add them, hear the show without echo (per-guest *mix-minus*), see the live program, and can chat with you privately.
-- **Multistreaming** to as many RTMP/RTMPS destinations as your upload allows. Each destination reconnects on its own, and a slow one never holds the others back.
-- **Local recording** to MP4 (H.264 + AAC). Recording is crash-safe: if the computer dies, the file still plays up to the last second or two.
-- **Layouts**: solo, grid, side by side, leader, picture in picture, presentation, cinema.
-- **Branding**: logo, full-screen overlays, colour or image backgrounds, name tags in your colours.
-- **Banners and ticker**: prepare lower thirds before the show, put them on screen with one click.
-- **Comments on screen**: Twitch chat with no login, or type in any question.
-- **720p or 1080p at 30 or 60 fps**, encoded with your computer's hardware encoder through WebCodecs.
-- **Private by design**: the studio listens on `127.0.0.1` only, stream keys never leave your computer, and there is no telemetry.
+| System | Download | Notes |
+|---|---|---|
+| **macOS** 11+, Apple silicon | [streamFree-macOS-AppleSilicon.dmg](https://github.com/iamvinbas/streamFree/releases/latest/download/streamFree-macOS-AppleSilicon.dmg) | Open it and drag streamFree into Applications |
+| **macOS** 11+, Intel | [streamFree-macOS-Intel.dmg](https://github.com/iamvinbas/streamFree/releases/latest/download/streamFree-macOS-Intel.dmg) | |
+| **Windows** 10/11, 64-bit | [streamFree-Windows-Setup.exe](https://github.com/iamvinbas/streamFree/releases/latest/download/streamFree-Windows-Setup.exe) | Per-user installer, no administrator rights; [portable .zip](https://github.com/iamvinbas/streamFree/releases/latest/download/streamfree-x86_64-pc-windows-msvc.zip) |
+| **Linux** x86-64 / ARM64 | [x86-64](https://github.com/iamvinbas/streamFree/releases/latest/download/streamfree-x86_64-unknown-linux-gnu.tar.gz) · [ARM64](https://github.com/iamvinbas/streamFree/releases/latest/download/streamfree-aarch64-unknown-linux-gnu.tar.gz) | Needs Chrome, Edge or Brave; see [limits](#status) |
 
-See [docs/feature-spec.md](docs/feature-spec.md) for the full feature map, including what is planned.
+Every file has a `.sha256` checksum on the [releases page](https://github.com/iamvinbas/streamFree/releases).
 
-## Install
-
-**macOS and Linux**
+**Or install with one command.** The script checks the SHA-256 checksum and adds the app to your system, with no sudo:
 
 ```sh
+# macOS and Linux
 curl -fsSL https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.sh | sh
 ```
 
-**Windows** (PowerShell)
-
 ```powershell
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.ps1 | iex
 ```
 
-This installs the **streamFree app** and the `streamfree` command:
+**First launch.** The app is not signed by Apple or Microsoft yet, so the system asks once:
 
-| System | Where the app appears |
-|---|---|
-| macOS | `~/Applications`, so Launchpad and Spotlight find it |
-| Windows | Start menu and desktop shortcuts |
-| Linux | Applications menu |
+- **macOS:** right-click the app and choose **Open**. If macOS still blocks it, use System Settings → Privacy & Security → **Open Anyway**. The install command avoids this.
+- **Windows:** if SmartScreen warns you, choose **More info** → **Run anyway**.
 
-Or download the file for your system from [Releases](https://github.com/iamvinbas/streamFree/releases) and unpack it.
-On macOS, drag `streamFree.app` into Applications. The app is not notarized, so the first time:
+## What you get
 
-- right-click it and choose **Open**;
-- if macOS still blocks it, go to **System Settings → Privacy & Security** and choose **Open Anyway**.
+- **A real app.** On macOS and Windows streamFree has its own window, Dock or taskbar icon, menu bar and permission prompts. The interface runs in the system's web engine (WebKit on macOS, WebView2 on Windows), like Slack or VS Code: no browser needed. On Linux the studio opens in a Chrome, Edge or Brave window.
+- **Guests from a link.** Up to 16 guests join from any modern browser, with nothing to install:
+  - they wait backstage until you bring them on stage;
+  - they see the live program;
+  - they hear everyone except themselves (*mix-minus*), so there is no echo;
+  - they can chat with you privately.
+- **Multistreaming.** Stream to as many RTMP/RTMPS destinations as your upload allows: YouTube, Twitch, Facebook, LinkedIn, Kick, X or your own server. Each destination reconnects on its own, and a slow one never holds the others back.
+- **Crash-safe recording.** Local MP4 (H.264 + AAC) is written in fragments, so even after a crash the file plays up to the last second or two.
+- **Show tools:**
+  - 7 layouts: solo, grid, side by side, leader, picture in picture, presentation, cinema;
+  - logo, full-screen overlays, colour or image backgrounds;
+  - name tags in your colours;
+  - lower-third banners prepared in advance, and a scrolling ticker;
+  - screen sharing with its audio;
+  - video clips for intros and outros.
+- **Comments on screen.** Read Twitch chat without logging in and put a comment on air with one click, or type questions in yourself.
+- **Quality.** 720p or 1080p at 30 or 60 fps, encoded by your computer's hardware encoder.
+- **Private by design.** The studio listens on `127.0.0.1` only. Stream keys never leave your computer, and there is no telemetry and no streamFree server.
 
-The install script above avoids this step.
+The full feature map, including what is planned, is in [docs/feature-spec.md](docs/feature-spec.md).
 
-## Quick start
+## Getting started
 
-1. Open the **streamFree** app. It has its own window, Dock/taskbar icon and menu; closing the window quits it.
-   - On macOS and Windows the studio runs in the system's web engine (WebKit on macOS, WebView2 on Windows), like Slack or VS Code: no browser needed.
-   - On Linux the app window needs Chrome, Edge or Brave.
-   - Guests can use any modern browser.
-   - From a terminal, `streamfree` opens the studio as a tab in your default browser instead.
-2. Allow camera and microphone.
-3. Optional: open **Destinations** and add YouTube, Twitch or another RTMP server with its stream key.
-4. Press **Record** to record only, or **Go live** to stream (and record) everywhere at once.
-5. Recordings go to `~/Movies/streamFree` on macOS, `~/Videos/streamFree` on Windows and Linux.
+1. **Open streamFree** and allow the camera and microphone when the system asks.
+2. **Add destinations** (optional): in **Destinations**, pick YouTube, Twitch, Facebook or a custom RTMP server and paste its stream key.
+3. **Invite guests** with the **Invite** button (see [Guests outside your computer](#guests-outside-your-computer)).
+4. Prepare your **Brand**, **Banners** and layout.
+5. Press **Record** to record only, or **Go live** to stream to every selected destination, and record too if you want.
+6. Close the window to quit. A running recording is finalized first.
 
-## Inviting guests
+Recordings are saved in `~/Movies/streamFree` on macOS and `~/Videos/streamFree` on Windows and Linux. The end-of-show dialog opens the folder.
 
-Browsers only allow cameras on secure (HTTPS) pages, except on `localhost`. Pick one of these:
+## Guests outside your computer
+
+Browsers only allow cameras on secure (HTTPS) pages, so how guests reach you depends on where they are. For now this is chosen when starting streamFree from a terminal:
 
 | Where are your guests? | Start streamFree with | What guests do |
 |---|---|---|
-| On this computer (testing) | `streamfree` | Open the invite link |
-| On your home or office network | `streamfree --lan` | Open the link and accept the self-signed certificate warning once |
-| Anywhere on the internet | `streamfree --tunnel` | Open the `https://….trycloudflare.com` link |
-| Behind your own HTTPS proxy | `streamfree --public-url https://studio.example.com` | Open the link |
+| On your home or office network | `streamfree --app --lan` | Open the link and accept the self-signed certificate warning once |
+| Anywhere on the internet | `streamfree --app --tunnel` | Open the `https://….trycloudflare.com` link |
+| Behind your own HTTPS proxy | `streamfree --app --public-url https://studio.example.com` | Open the link |
 
-- `--tunnel` needs [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) installed. It creates a free temporary HTTPS address. Only the guest page and its signaling travel through it; the media goes directly between browsers.
-- If some guests cannot connect (strict company or mobile networks), add a TURN server under **Settings → Guests → ICE servers**.
+- `--tunnel` needs [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/). Only the guest page and its signaling travel through the tunnel; audio and video go directly between you and your guests.
+- If some guests cannot connect (strict company or mobile networks), add a TURN server in **Settings → Guests → ICE servers**.
 
-## Command-line options
+## Command line
+
+The one-command installers also add the `streamfree` command (with the `.dmg` or `.exe`, run the binary inside the app folder):
 
 ```text
 streamfree [--app [--browser]] [--port 8787] [--lan] [--tunnel] [--public-url URL]
            [--data-dir DIR] [--recordings-dir DIR] [--no-open]
 ```
 
-`--app` opens the studio in streamFree's own window and quits when it is closed (what the app icon does). For example, `streamfree --app --lan` starts the app with guests on your network. Add `--browser` to use a Chrome/Edge/Brave window instead.
+| Option | Effect |
+|---|---|
+| *(none)* | Studio in a tab of your default browser (Chrome, Edge or Brave recommended); Ctrl+C quits |
+| `--app` | streamFree's own window (what the app icon runs); closing it quits |
+| `--browser` | With `--app`: a Chrome/Edge/Brave window instead of the system WebView |
+| `--lan`, `--tunnel`, `--public-url` | How guests reach you (see above) |
 
-Settings, destinations and uploaded images live in the data directory:
+Settings, destinations and uploaded images live in:
 
 - `~/Library/Application Support/streamFree` on macOS;
 - `%APPDATA%\streamFree` on Windows;
 - `~/.local/share/streamFree` on Linux.
 
+The app writes its log to `streamfree.log` in the same folder.
+
 ## How it works
 
-The host's browser captures, composites and encodes (WebCodecs, hardware H.264 and AAC) in a background worker. The Rust binary receives the encoded stream and does what a browser cannot:
+```text
+ guests' browsers ──WebRTC──▶  streamFree on your computer  ──RTMP(S)──▶ YouTube · Twitch · Facebook · any server
+                               ├─ studio UI (system WebView)        └────▶ recording.mp4
+                               │   camera, screen, guests → compositor worker → H.264 + AAC (WebCodecs)
+                               └─ Rust core: RTMP publisher, MP4 recorder, signaling, settings
+```
 
-- mux and publish it over RTMP/RTMPS to every destination;
-- write the MP4 recording;
-- relay WebRTC signaling between you and your guests.
+- **Studio.** Captures, composites and encodes in a background worker with the hardware encoder (WebCodecs).
+- **Rust core.** Does what a web page cannot:
+  - publishes to every destination over RTMP/RTMPS;
+  - writes the MP4;
+  - relays WebRTC signaling to guests;
+  - keeps stream keys safe.
+- **Size.** Everything ships as one binary of about 7 MB.
 
-Details: [docs/architecture.md](docs/architecture.md). Standards and papers behind the design: [docs/references.md](docs/references.md).
+Details: [docs/architecture.md](docs/architecture.md). The protocols and papers behind it: [docs/references.md](docs/references.md).
 
-## Status and limits
+## Status
 
-streamFree is young. What is verified, and how:
+streamFree is young. What has been checked, and how:
 
-| Area | How it was tested |
+| Area | Verified by |
 |---|---|
-| Recording, two simultaneous RTMP destinations, WebRTC guests, A/V sync | Automated tests on macOS with Google Chrome |
-| RTMP output | Checked against FFmpeg's RTMP server |
-| Twitch chat connection | Checked live |
+| Recording, two simultaneous RTMP destinations, WebRTC guests, audio/video sync | Automated browser tests (real Chrome, fake camera) on every push |
+| RTMP output and MP4 files | FFmpeg as an independent oracle in the test suite |
+| macOS app: native window, 30 fps with the window minimized, audio in sync | Built-in smoke test (`streamfree --smoke-test 8`) |
+| macOS app: camera and microphone permissions | Manual test |
+| Twitch chat connection, LAN HTTPS mode, macOS disk image, install script, download links | Manual and scripted checks |
 
-Still unverified:
+Not verified yet:
 
-- **Real platform ingest** (YouTube, Twitch, Facebook…) has not been verified by the authors yet. Please report what works for you.
-- **Hosting needs an AAC encoder in the web engine.** Verified with the macOS app (WebKit) and Chrome on macOS. Windows (WebView2, Chrome, Edge) is expected to work through the system encoder but is untested. Chrome on Linux appears to ship no AAC encoder, so on Linux streamFree works for guests but not yet for hosting; it shows a clear error if so.
-- **Hidden windows**: the macOS app keeps 30 fps with its window minimized (checked with the built-in smoke test). A background browser tab is not covered by an automated test.
+- **Real platform ingest** (YouTube, Twitch, Facebook…). Please report what works for you.
+- **Windows.** The app and installer build and pass the test suite in CI, but have not been run on a Windows PC yet.
+- **Linux hosting.** Chrome on Linux appears to have no AAC encoder, so on Linux streamFree may only work for guests; it shows a clear error if so.
+- **Screen sharing inside the macOS app**, and **`--tunnel`** end to end.
 
-Planned work is listed in [docs/feature-spec.md](docs/feature-spec.md): per-guest multi-track recordings, scenes, vertical output, YouTube chat, background blur and local captions.
+Planned:
 
-## Build from source
+- per-guest multi-track recordings;
+- scenes and vertical output;
+- YouTube chat;
+- background blur;
+- local captions;
+- choosing LAN or tunnel from inside the app.
+
+## Development
 
 ```sh
 git clone https://github.com/iamvinbas/streamFree && cd streamFree
-cargo build --release          # binary in target/release/streamfree
-cargo test                     # unit tests (+ FFmpeg-oracle tests if ffmpeg is installed)
-cd tests/e2e && npm install && npm test   # browser tests (needs Google Chrome and ffmpeg)
+cargo build --release                       # target/release/streamfree
+cargo test                                  # unit tests + FFmpeg-oracle tests (if ffmpeg is installed)
+cd tests/e2e && npm install && npm test     # browser tests: needs Google Chrome and ffmpeg
+./target/release/streamfree --smoke-test 8  # macOS/Windows: record in the app window, half minimized
 ```
 
-Requires Rust 1.88 or newer (the minimum declared by the dependencies; developed with 1.99). The web studio is plain HTML/CSS/JavaScript in `web/`, embedded into the binary at build time.
+Requires Rust 1.88 or newer. The studio (`web/`) is plain HTML, CSS and JavaScript, embedded into the binary at build time.
+
+| Path | Contents |
+|---|---|
+| `src/` | Rust core: `server.rs` (HTTP/WebSocket), `live.rs` (fan-out), `rtmp/`, `mp4.rs`, `flv.rs`, `desktop.rs` (native window), `app.rs`, `chat.rs`, `net.rs`, `store.rs` |
+| `web/` | Studio and guest pages, compositor worker, audio capture worklet |
+| `site/` | The website, deployed to GitHub Pages on every push to `main` |
+| `packaging/` | Icons, macOS `.app` and `.dmg` scripts, Windows Inno Setup installer |
+| `tests/` | FFmpeg-oracle integration tests and browser end-to-end tests |
+| `docs/` | Architecture, feature map, references |
+
+**Releasing.** Push a tag such as `v0.4.0`. GitHub Actions then builds macOS (arm64, x64), Windows and Linux (x64, arm64), creates the `.dmg` files and the Windows installer, and publishes them with checksums. Tags with a hyphen (`v0.4.0-rc.1`) become pre-releases.
 
 ## License
 

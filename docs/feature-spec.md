@@ -27,7 +27,7 @@ Status: ✅ done and tested · 🟡 partial · ⏳ planned.
 
 | Area | Publicly documented capability | streamFree | Notes |
 |---|---|---|---|
-| Studio | Studio runs in the browser, nothing to install for guests | ✅ | Host runs one local binary and uses Chrome/Edge; guests use any modern browser |
+| Studio | Studio runs in the browser, nothing to install for guests | ✅ | Host installs a small desktop app (own window on macOS/Windows, Chrome/Edge/Brave window on Linux); guests use any modern browser |
 | Guests | Guests join from a link | ✅ | Invite link with a revocable token; WebRTC; tested end to end |
 | Guests | Up to 10 people on screen, 15 backstage (paid plans) | ✅ | Up to 16 guests; no artificial limit on stage size besides layout readability |
 | Guests | Backstage / green room | ✅ | Guests wait backstage until the host adds them; private backstage chat |
