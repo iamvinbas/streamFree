@@ -1,11 +1,14 @@
 //! streamFree: a free, local live-streaming studio in one binary.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use streamfree::{app, net, server, store};
+
+/// Whether this build has the native desktop window (system WebView).
+const NATIVE_WINDOW: bool = cfg!(any(target_os = "macos", windows));
 
 #[derive(Parser, Debug)]
 #[command(
@@ -49,37 +52,56 @@ struct Cli {
     /// is closed. On by default when started from the macOS app bundle.
     #[arg(long)]
     app: bool,
+
+    /// With --app: show the studio in a Chrome/Edge/Brave window instead of
+    /// streamFree's own window.
+    #[arg(long)]
+    browser: bool,
+
+    /// Release check: record for N seconds in the app window, half of the
+    /// time minimized, then quit.
+    #[arg(long, hide = true, value_name = "SECONDS")]
+    smoke_test: Option<u64>,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
-    let app_mode = cli.app || app::launched_from_bundle();
+    let app_mode = cli.app || cli.smoke_test.is_some() || app::launched_from_bundle();
+    let native = app_mode && !cli.browser && NATIVE_WINDOW;
     let data_dir = cli.data_dir.clone().unwrap_or_else(store::default_data_dir);
-    init_logging(app_mode, &data_dir);
+    let quiet = app_mode && cli.smoke_test.is_none();
+    init_logging(quiet, &data_dir);
     let _ = rustls::crypto::ring::default_provider().install_default();
-
-    if app_mode {
+    if quiet {
         app::hide_console();
-        if let Err(e) = run(cli, data_dir, true).await {
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let result = if native {
+        run_native(runtime, cli, data_dir)
+    } else {
+        runtime.block_on(run_in_browser(cli, data_dir, app_mode))
+    };
+    if let Err(e) = &result {
+        if quiet {
             tracing::error!("{e:#}");
             app::alert(&format!("{e:#}"));
-            return Err(e);
         }
-        return Ok(());
     }
-    run(cli, data_dir, false).await
+    result
 }
 
 /// Logs go to the terminal, or to `streamfree.log` in the data directory when
 /// there is no terminal (app mode).
-fn init_logging(app_mode: bool, data_dir: &std::path::Path) {
+fn init_logging(to_file: bool, data_dir: &std::path::Path) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "streamfree=info".into());
     let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false);
-    if app_mode {
+    if to_file {
         let _ = std::fs::create_dir_all(data_dir);
         if let Ok(file) = std::fs::OpenOptions::new()
             .create(true)
@@ -96,37 +118,26 @@ fn init_logging(app_mode: bool, data_dir: &std::path::Path) {
     builder.init();
 }
 
-async fn run(cli: Cli, data_dir: PathBuf, app_mode: bool) -> Result<()> {
+async fn bind(port: u16) -> std::io::Result<tokio::net::TcpListener> {
+    tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await
+}
+
+fn busy_error(e: std::io::Error, port: u16) -> anyhow::Error {
+    anyhow::Error::new(e).context(format!("port {port} is busy; try --port {}", port + 2))
+}
+
+/// Builds the server state and starts the optional LAN listener and tunnel.
+/// Returns the state, the router and the studio URL.
+async fn setup(
+    cli: &Cli,
+    data_dir: &std::path::Path,
+    store: store::Store,
+    quit_hint: &str,
+) -> (server::Shared, axum::Router, String) {
     let recordings_dir = cli
         .recordings_dir
         .clone()
         .unwrap_or_else(store::default_recordings_dir);
-    let store = store::Store::open(data_dir.clone())?;
-    let browser = if app_mode {
-        Some(app::require_browser()?)
-    } else {
-        None
-    };
-
-    let addr = SocketAddr::from(([127, 0, 0, 1], cli.port));
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(listener) => listener,
-        Err(e) => {
-            // Opened twice: show the window of the instance already running.
-            let token = store.settings.host_token.clone();
-            if let Some(browser) = &browser {
-                if app::existing_instance(cli.port, &token).await {
-                    let url = format!("http://localhost:{}/?t={token}", cli.port);
-                    let mut child = app::open_window(browser, &url, &data_dir.join("browser"))?;
-                    let _ = child.wait().await;
-                    return Ok(());
-                }
-            }
-            return Err(e).with_context(|| {
-                format!("port {} is busy; try --port {}", cli.port, cli.port + 2)
-            });
-        }
-    };
     let local_url = format!("http://localhost:{}", cli.port);
     let state = server::AppState::new(store, recordings_dir.clone(), local_url);
     let router = server::router(state.clone());
@@ -135,8 +146,7 @@ async fn run(cli: Cli, data_dir: PathBuf, app_mode: bool) -> Result<()> {
         *state.public_url.write().await = Some(url.trim_end_matches('/').to_owned());
     }
     if cli.lan {
-        let lan_port = cli.port + 1;
-        match net::serve_lan(router.clone(), &data_dir, lan_port).await {
+        match net::serve_lan(router.clone(), data_dir, cli.port + 1).await {
             Ok(url) => *state.lan_url.write().await = Some(url),
             Err(e) => tracing::warn!("LAN guests disabled: {e:#}"),
         }
@@ -163,15 +173,88 @@ async fn run(cli: Cli, data_dir: PathBuf, app_mode: bool) -> Result<()> {
     println!("  Invite link: {}", state.invite_url().await);
     println!("  Recordings:  {}", recordings_dir.display());
     println!("  Settings:    {}", data_dir.display());
-    println!(
-        "  {}",
-        if app_mode {
-            "Close the studio window to quit."
-        } else {
-            "Press Ctrl+C to quit."
-        }
-    );
+    println!("  {quit_hint}");
     println!();
+    (state, router, host_url)
+}
+
+/// streamFree's own window with the system WebView (macOS, Windows).
+#[cfg(any(target_os = "macos", windows))]
+fn run_native(runtime: tokio::runtime::Runtime, cli: Cli, data_dir: PathBuf) -> Result<()> {
+    let store = store::Store::open(data_dir.clone())?;
+    let listener = match runtime.block_on(bind(cli.port)) {
+        Ok(listener) => listener,
+        Err(e) => {
+            let token = store.settings.host_token.clone();
+            if runtime.block_on(app::existing_instance(cli.port, &token)) {
+                app::alert("streamFree is already open.");
+                return Ok(());
+            }
+            return Err(busy_error(e, cli.port));
+        }
+    };
+    let (state, router, mut url) =
+        runtime.block_on(setup(&cli, &data_dir, store, "Close the window to quit."));
+    if cli.smoke_test.is_some() {
+        url.push_str("&nodevices=1");
+    }
+    let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = runtime.spawn(async move {
+        let result = axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await;
+        if let Err(e) = result {
+            tracing::error!("server stopped: {e}");
+        }
+    });
+    streamfree::desktop::run(streamfree::desktop::Options {
+        url,
+        state,
+        runtime,
+        shutdown,
+        server,
+        smoke_test: cli.smoke_test,
+    })
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn run_native(_: tokio::runtime::Runtime, _: Cli, _: PathBuf) -> Result<()> {
+    unreachable!("no native window on this platform")
+}
+
+/// Terminal mode (studio in a browser tab) and the browser-window app mode
+/// used on Linux or with --browser.
+async fn run_in_browser(cli: Cli, data_dir: PathBuf, app_mode: bool) -> Result<()> {
+    let store = store::Store::open(data_dir.clone())?;
+    let browser = if app_mode {
+        Some(app::require_browser()?)
+    } else {
+        None
+    };
+    let listener = match bind(cli.port).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            // Opened twice: show the window of the instance already running.
+            let token = store.settings.host_token.clone();
+            if let Some(browser) = &browser {
+                if app::existing_instance(cli.port, &token).await {
+                    let url = format!("http://localhost:{}/?t={token}", cli.port);
+                    let mut child = app::open_window(browser, &url, &data_dir.join("browser"))?;
+                    let _ = child.wait().await;
+                    return Ok(());
+                }
+            }
+            return Err(busy_error(e, cli.port));
+        }
+    };
+    let hint = if app_mode {
+        "Close the studio window to quit."
+    } else {
+        "Press Ctrl+C to quit."
+    };
+    let (state, router, host_url) = setup(&cli, &data_dir, store, hint).await;
 
     let (quit_tx, quit_rx) = tokio::sync::oneshot::channel::<()>();
     let mut window = None;

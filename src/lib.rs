@@ -3,6 +3,8 @@
 
 pub mod app;
 pub mod chat;
+#[cfg(any(target_os = "macos", windows))]
+pub mod desktop;
 pub mod flv;
 pub mod live;
 pub mod media;

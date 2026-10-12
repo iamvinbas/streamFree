@@ -11,16 +11,17 @@
 export class Mixer {
   constructor() {
     this.ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
-    this.program = this.ctx.createMediaStreamDestination();
+    // The program bus feeds the encoder through an AudioWorklet (see
+    // capture-worklet.js). A silent source keeps it rendering when nobody
+    // is on stage, so the stream always carries audio.
+    this.program = this.ctx.createGain();
     this.program.channelCount = 2;
     this.program.channelCountMode = 'explicit';
-    // A destination with no active input produces no audio data at all, which
-    // would leave the stream without an audio track. Keep a silent source
-    // connected so the program always carries (possibly silent) audio.
     this.silence = this.ctx.createConstantSource();
     this.silence.offset.value = 0;
     this.silence.connect(this.program);
     this.silence.start();
+    this.capture = null;
     this.monitor = this.ctx.createGain();
     this.monitor.connect(this.ctx.destination);
     this.monitorEnabled = true;
@@ -36,9 +37,42 @@ export class Mixer {
     if (this.ctx.state !== 'running') await this.ctx.resume();
   }
 
-  /** The mixed program track, fed to the encoder. */
-  programTrack() {
-    return this.program.stream.getAudioTracks()[0];
+  /** Loads the capture worklet; call once before startCapture(). */
+  async init() {
+    await this.ctx.audioWorklet.addModule('/static/js/capture-worklet.js');
+    this.capture = new AudioWorkletNode(this.ctx, 'streamfree-capture', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [2],
+      channelCount: 2,
+      channelCountMode: 'explicit',
+    });
+    // Connected to the output through a muted gain so every engine renders it.
+    const mute = this.ctx.createGain();
+    mute.gain.value = 0;
+    this.program.connect(this.capture);
+    this.capture.connect(mute);
+    mute.connect(this.ctx.destination);
+  }
+
+  /**
+   * Starts sending program audio blocks to `port`. Returns how context time
+   * maps to wall-clock time, so the receiver can timestamp the blocks.
+   */
+  startCapture(port) {
+    this.capture.port.postMessage({ port, active: true }, [port]);
+    const ts = this.ctx.getOutputTimestamp();
+    const contextTime = ts.contextTime || this.ctx.currentTime;
+    const performanceTime = ts.performanceTime || performance.now();
+    return {
+      sampleRate: this.ctx.sampleRate,
+      contextTime,
+      wallMs: performance.timeOrigin + performanceTime,
+    };
+  }
+
+  stopCapture() {
+    this.capture?.port.postMessage({ active: false });
   }
 
   /** The return mix for one guest; created on first use. */

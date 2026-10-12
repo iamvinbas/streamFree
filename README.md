@@ -62,8 +62,9 @@ The install script above avoids this step.
 
 ## Quick start
 
-1. Open the **streamFree** app. The studio opens in its own window; closing that window quits streamFree.
-   - The app shows the studio through **Chrome, Edge or Brave**, so one of them must be installed (version 100 or newer).
+1. Open the **streamFree** app. It has its own window, Dock/taskbar icon and menu; closing the window quits it.
+   - On macOS and Windows the studio runs in the system's web engine (WebKit on macOS, WebView2 on Windows), like Slack or VS Code: no browser needed.
+   - On Linux the app window needs Chrome, Edge or Brave.
    - Guests can use any modern browser.
    - From a terminal, `streamfree` opens the studio as a tab in your default browser instead.
 2. Allow camera and microphone.
@@ -88,11 +89,11 @@ Browsers only allow cameras on secure (HTTPS) pages, except on `localhost`. Pick
 ## Command-line options
 
 ```text
-streamfree [--app] [--port 8787] [--lan] [--tunnel] [--public-url URL]
+streamfree [--app [--browser]] [--port 8787] [--lan] [--tunnel] [--public-url URL]
            [--data-dir DIR] [--recordings-dir DIR] [--no-open]
 ```
 
-`--app` opens the studio in its own window and quits when it is closed (what the app icon does). For example, `streamfree --app --lan` starts the app with guests on your network.
+`--app` opens the studio in streamFree's own window and quits when it is closed (what the app icon does). For example, `streamfree --app --lan` starts the app with guests on your network. Add `--browser` to use a Chrome/Edge/Brave window instead.
 
 Settings, destinations and uploaded images live in the data directory:
 
@@ -123,8 +124,8 @@ streamFree is young. What is verified, and how:
 Still unverified:
 
 - **Real platform ingest** (YouTube, Twitch, Facebook…) has not been verified by the authors yet. Please report what works for you.
-- **Hosting needs the browser's AAC encoder.** Verified with Chrome on macOS. Windows (Chrome, Edge) is expected to work through the system encoder but is untested. Chrome on Linux appears to ship no AAC encoder, so on Linux streamFree works for guests but not yet for hosting; it shows a clear error if so.
-- **Background tabs**: streaming is designed to keep its frame rate when the studio tab is in the background, but this is not yet covered by an automated test.
+- **Hosting needs an AAC encoder in the web engine.** Verified with the macOS app (WebKit) and Chrome on macOS. Windows (WebView2, Chrome, Edge) is expected to work through the system encoder but is untested. Chrome on Linux appears to ship no AAC encoder, so on Linux streamFree works for guests but not yet for hosting; it shows a clear error if so.
+- **Hidden windows**: the macOS app keeps 30 fps with its window minimized (checked with the built-in smoke test). A background browser tab is not covered by an automated test.
 
 Planned work is listed in [docs/feature-spec.md](docs/feature-spec.md): per-guest multi-track recordings, scenes, vertical output, YouTube chat, background blur and local captions.
 

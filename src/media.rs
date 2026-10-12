@@ -58,6 +58,67 @@ pub struct StreamConfig {
     pub audio: AudioConfig,
 }
 
+/// Reads an MPEG-4 descriptor header (ISO/IEC 14496-1 8.3.3): tag and an
+/// expandable size of up to four 7-bit groups. Returns (tag, body range).
+fn descriptor_at(buf: &[u8], pos: usize) -> Option<(u8, std::ops::Range<usize>)> {
+    let tag = *buf.get(pos)?;
+    let mut size = 0usize;
+    let mut p = pos + 1;
+    for _ in 0..4 {
+        let b = *buf.get(p)?;
+        p += 1;
+        size = (size << 7) | (b & 0x7f) as usize;
+        if b & 0x80 == 0 {
+            let end = p.checked_add(size)?;
+            return (end <= buf.len()).then_some((tag, p..end));
+        }
+    }
+    None
+}
+
+/// The `AudioSpecificConfig` from a WebCodecs AAC `decoderConfig.description`.
+///
+/// Chromium returns the AudioSpecificConfig itself. WebKit returns a whole
+/// ES_Descriptor (tag 0x03) or `esds` box that contains it in the
+/// DecoderSpecificInfo (tag 0x05) of its DecoderConfigDescriptor (tag 0x04).
+pub fn audio_specific_config(description: &[u8]) -> Option<Bytes> {
+    let mut desc = description;
+    if desc.len() > 12 && &desc[4..8] == b"esds" {
+        desc = &desc[12..];
+    }
+    if desc.first() != Some(&0x03) {
+        return (desc.len() >= 2).then(|| Bytes::copy_from_slice(desc));
+    }
+    let (_, es) = descriptor_at(desc, 0)?;
+    let flags = *desc.get(es.start + 2)?;
+    let mut pos = es.start + 3;
+    if flags & 0x80 != 0 {
+        pos += 2; // dependsOn_ES_ID
+    }
+    if flags & 0x40 != 0 {
+        pos += 1 + *desc.get(pos)? as usize; // URL
+    }
+    if flags & 0x20 != 0 {
+        pos += 2; // OCR_ES_Id
+    }
+    while pos < es.end {
+        let (tag, body) = descriptor_at(desc, pos)?;
+        if tag == 0x04 {
+            // objectTypeIndication, streamType, bufferSizeDB, maxBitrate, avgBitrate
+            let mut inner = body.start + 13;
+            while inner < body.end {
+                let (tag, dsi) = descriptor_at(desc, inner)?;
+                if tag == 0x05 {
+                    return Some(Bytes::copy_from_slice(&desc[dsi]));
+                }
+                inner = dsi.end;
+            }
+        }
+        pos = body.end;
+    }
+    None
+}
+
 /// Merges the packets of two tracks into one stream ordered by timestamp.
 ///
 /// Audio and video encoders emit chunks independently, so they arrive slightly
@@ -194,6 +255,27 @@ mod tests {
             keyframe: true,
             data: Bytes::new(),
         }
+    }
+
+    #[test]
+    fn audio_config_from_chromium_and_webkit() {
+        // Chromium: the AudioSpecificConfig itself (AAC-LC, 48 kHz, stereo).
+        assert_eq!(
+            audio_specific_config(&[0x11, 0x90]).as_deref(),
+            Some(&[0x11, 0x90][..])
+        );
+        // WebKit (macOS 26): a full ES_Descriptor with 4-byte sizes.
+        let webkit = [
+            0x03, 0x80, 0x80, 0x80, 0x22, 0x00, 0x00, 0x00, 0x04, 0x80, 0x80, 0x80, 0x14, 0x40,
+            0x14, 0x00, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x80,
+            0x80, 0x80, 0x02, 0x11, 0x90, 0x06, 0x80, 0x80, 0x80, 0x01, 0x02,
+        ];
+        assert_eq!(
+            audio_specific_config(&webkit).as_deref(),
+            Some(&[0x11, 0x90][..])
+        );
+        // Truncated descriptors are rejected instead of misread.
+        assert_eq!(audio_specific_config(&webkit[..20]), None);
     }
 
     #[test]

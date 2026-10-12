@@ -1,6 +1,7 @@
 // streamFree studio: the host's control room.
 //
-// Media flow: camera/screen/guest tracks -> MediaStreamTrackProcessor ->
+// Media flow: camera/screen/guest tracks -> MediaStreamTrackProcessor (in the
+// page on Chromium, in the worker on WebKit) ->
 // compositor worker (canvas + WebCodecs) -> WebSocket -> local server ->
 // RTMP destinations and MP4 recording. Audio is mixed here with Web Audio.
 
@@ -87,8 +88,10 @@ resetEncoderReady();
 // ---------------------------------------------------------------- boot
 
 async function boot() {
-  if (!('MediaStreamTrackProcessor' in window) || !('VideoEncoder' in window)) {
-    fatal('streamFree needs Chrome, Edge, Brave or another Chromium browser (version 100 or newer) for the studio. Guests can join from any modern browser.');
+  const capable = 'VideoEncoder' in window && 'AudioEncoder' in window && 'AudioWorkletNode' in window
+    && 'OffscreenCanvas' in window;
+  if (!capable) {
+    fatal('This browser cannot run the streamFree studio. Use the streamFree app, or Chrome, Edge or Brave (version 100 or newer). Guests can join from any modern browser.');
     return;
   }
   if (!token) {
@@ -106,13 +109,26 @@ async function boot() {
 
   mixer = new Mixer();
   mixer.setMonitor(S.settings.monitor);
+  try {
+    await mixer.init();
+  } catch (e) {
+    fatal(`Audio could not start: ${e.message}`);
+    return;
+  }
   startWorker();
   setupReturnFeed();
   connectSignaling();
   bindTopbar();
   renderAll();
   document.addEventListener('click', () => mixer.resume(), { once: true });
-  await startCamera();
+  // ?nodevices: automated checks that must not open camera permission prompts.
+  if (new URL(location.href).searchParams.has('nodevices')) {
+    people.set('host', { id: 'host', kind: 'host', name: S.hostName || 'Host', stream: new MediaStream(), micOn: false, camOn: false });
+    renderPeople();
+    pushScene();
+  } else {
+    await startCamera();
+  }
   for (const a of S.assets.filter((a) => a.kind === 'image')) loadImage(a.id);
   meterLoop();
   window.addEventListener('beforeunload', (e) => {
@@ -167,8 +183,30 @@ function attachVideo(id, track) {
     worker.postMessage({ type: 'remove-source', id });
     return;
   }
-  const processor = new MediaStreamTrackProcessor({ track });
-  worker.postMessage({ type: 'source', id, readable: processor.readable }, [processor.readable]);
+  if ('MediaStreamTrackProcessor' in window) {
+    const processor = new MediaStreamTrackProcessor({ track });
+    worker.postMessage({ type: 'source', id, readable: processor.readable }, [processor.readable]);
+  } else {
+    // WebKit reads tracks only inside workers: hand the worker its own copy.
+    const copy = track.clone();
+    worker.postMessage({ type: 'source-track', id, track: copy }, [copy]);
+  }
+}
+
+// A video track for a playing <video>. WebKit has no
+// HTMLMediaElement.captureStream(), so draw the element into a canvas there.
+function elementVideoTrack(video) {
+  if (typeof video.captureStream === 'function') return video.captureStream().getVideoTracks()[0] || null;
+  const canvas = h('canvas', { width: video.videoWidth || 1280, height: video.videoHeight || 720 });
+  const ctx2d = canvas.getContext('2d');
+  const draw = () => {
+    if (video.ended || mediaElement !== video) return;
+    ctx2d.drawImage(video, 0, 0, canvas.width, canvas.height);
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(draw);
+    else requestAnimationFrame(draw);
+  };
+  draw();
+  return canvas.captureStream(30).getVideoTracks()[0] || null;
 }
 
 function pushScene() {
@@ -254,7 +292,7 @@ function onWorkerMessage(e) {
     case 'error':
       toast(m.error, 'error');
       if (live.state === 'starting') {
-        live.audioTrack?.stop();
+        mixer.stopCapture();
         live = { state: 'idle', mode: null, status: null };
         renderTopbar();
       }
@@ -364,8 +402,8 @@ async function playMedia(asset) {
     toast(`Cannot play ${asset.name}: ${e.message}`, 'error');
     return;
   }
-  const stream = video.captureStream();
-  const track = stream.getVideoTracks()[0];
+  const track = elementVideoTrack(video);
+  const stream = new MediaStream(track ? [track] : []);
   people.set('media', { id: 'media', kind: 'media', name: asset.name, stream, camOn: true, micOn: true });
   if (track) attachVideo('media', track);
   mixer.add('media', 'media', video);
@@ -539,9 +577,8 @@ async function startBroadcast(mode, selected) {
   renderTopbar();
   await mixer.resume();
   await encoderReady;
-  const audioTrack = mixer.programTrack().clone();
-  const processor = new MediaStreamTrackProcessor({ track: audioTrack });
-  live.audioTrack = audioTrack;
+  const audioChannel = new MessageChannel();
+  const audioClock = mixer.startCapture(audioChannel.port1);
   const stamp = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const name = `${S.title || 'streamFree'} ${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())} ${pad(stamp.getHours())}-${pad(stamp.getMinutes())}`;
@@ -555,10 +592,11 @@ async function startBroadcast(mode, selected) {
         name,
         videoBitrate: S.settings.videoKbps * 1000,
         audioBitrate: S.settings.audioKbps * 1000,
-        audioReadable: processor.readable,
+        audioPort: audioChannel.port2,
+        audioClock,
       },
     },
-    [processor.readable],
+    [audioChannel.port2],
   );
 }
 
@@ -570,7 +608,7 @@ function stopBroadcast() {
 }
 
 function finishBroadcast(result) {
-  live.audioTrack?.stop();
+  mixer.stopCapture();
   const mode = live.mode;
   live = { state: 'idle', mode: null, status: null };
   renderTopbar();
@@ -609,6 +647,21 @@ function openDialog(body, actions) {
 
 function closeDialog() {
   $('#dialog').close();
+}
+
+// window.confirm() is unavailable in some native WebViews; use our dialog.
+function confirmDialog(question, action) {
+  return new Promise((resolve) => {
+    const done = (answer) => {
+      closeDialog();
+      resolve(answer);
+    };
+    openDialog([h('h2', {}, question)], [
+      h('button', { class: 'btn', type: 'button', onclick: () => done(false) }, 'Cancel'),
+      h('button', { class: 'btn danger', type: 'button', onclick: () => done(true) }, action),
+    ]);
+    $('#dialog').addEventListener('close', () => resolve(false), { once: true });
+  });
 }
 
 function goLiveDialog() {
@@ -879,7 +932,7 @@ function personCard(p) {
     }, icon(p.muted ? 'micOff' : 'mic', 16)));
     actions.push(h('button', {
       class: 'icon-btn', title: 'Remove from studio', 'aria-label': 'Remove guest from studio', onclick: () => {
-        if (confirm(`Remove ${p.name} from the studio?`)) send({ to: p.id, type: 'kick' });
+        confirmDialog(`Remove ${p.name} from the studio?`, 'Remove').then((ok) => ok && send({ to: p.id, type: 'kick' }));
       },
     }, icon('close', 16)));
   }
@@ -1169,7 +1222,7 @@ function destinationsPanel() {
         h('button', { class: 'btn small ghost', onclick: () => openDialog([h('h2', {}, `Edit ${d.name}`), destinationForm(d)], []) }, 'Edit'),
         h('button', {
           class: 'icon-btn', 'aria-label': `Delete ${d.name}`, onclick: async () => {
-            if (!confirm(`Delete ${d.name}?`)) return;
+            if (!(await confirmDialog(`Delete ${d.name}?`, 'Delete'))) return;
             await api.del(`/api/destinations/${d.id}`);
             destinations = destinations.filter((x) => x.id !== d.id);
             renderPanel();

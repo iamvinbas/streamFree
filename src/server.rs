@@ -858,7 +858,11 @@ async fn run_ingest(state: &Shared, socket: &mut WebSocket) {
                                 video = Some(VideoConfig { width, height, framerate, bitrate, avcc: description.into() });
                             }
                             IngestControl::AudioConfig { sample_rate, channels, bitrate, description } => {
-                                audio = Some(AudioConfig { sample_rate, channels, bitrate, asc: description.into() });
+                                let Some(asc) = crate::media::audio_specific_config(&description) else {
+                                    send_json(socket, json!({"type": "error", "error": "unsupported audio encoder configuration"})).await;
+                                    break "could not start";
+                                };
+                                audio = Some(AudioConfig { sample_rate, channels, bitrate, asc });
                             }
                             IngestControl::Stop => break "stopped by host",
                         }

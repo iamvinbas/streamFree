@@ -1,6 +1,6 @@
 [package]
 name = "streamfree"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Free, local, open-source live streaming studio: browser studio, guests, multistreaming and recording in one binary."
@@ -37,6 +37,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 webbrowser = "1"
 webpki-roots = "1"
+
+# Native app window (system WebView): WKWebView on macOS, WebView2 on Windows.
+# Linux opens the studio in a Chromium browser window instead.
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+muda = "0"
+tao = "0.37"
+wry = "0.57"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Console"] }

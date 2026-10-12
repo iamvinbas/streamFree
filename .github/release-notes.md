@@ -24,4 +24,4 @@ The installers add the **streamFree app**: Applications on macOS, Start menu and
 
 The macOS app is not notarized. The first time, right-click it and choose **Open**; if macOS still blocks it, use **System Settings → Privacy & Security → Open Anyway**. The install script avoids this step.
 
-The app shows the studio through Chrome, Edge or Brave, so one must be installed. Guests can use any modern browser. See the [README](https://github.com/iamvinbas/streamFree#readme) for guests over the internet, destinations and known limits.
+On macOS and Windows the app runs the studio in the system's web engine (WebKit, WebView2), so no browser is needed; on Linux it needs Chrome, Edge or Brave. Guests can use any modern browser. See the [README](https://github.com/iamvinbas/streamFree#readme) for guests over the internet, destinations and known limits.

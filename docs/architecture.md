@@ -38,6 +38,27 @@ flowchart LR
   CHAT --> SIG
 ```
 
+## Desktop app
+
+On macOS and Windows, `streamfree --app` (what the app icon runs) opens
+its own window with the system WebView: WKWebView on macOS, WebView2 on
+Windows (`src/desktop.rs`, built on tao, wry and muda). The window has an
+Edit menu so copy and paste work. Closing it unloads the page, waits until
+any recording is finalized, then stops the server. On macOS the process
+holds a latency-critical activity so App Nap does not throttle a live show.
+
+WebKit differs from Chromium in two ways the studio handles:
+
+- it reads video tracks only inside workers, so tracks are transferred to
+  the compositor worker;
+- AAC `decoderConfig.description` is a whole ES_Descriptor, from which the
+  server extracts the AudioSpecificConfig.
+
+Audio reaches the encoder through an AudioWorklet in both engines.
+
+`streamfree --smoke-test 8` records for 8 s in that window, half of the
+time minimized, and is used to check the WebView keeps full frame rate.
+
 ## Why this split
 
 - **Browsers already ship the hard parts.** Camera and screen capture,
@@ -61,10 +82,10 @@ keeps the stream at its frame rate when the host switches tabs.
    ticker, comment) on an `OffscreenCanvas`, creates a `VideoFrame` from it and
    encodes it: H.264 High profile, `avc` format, realtime latency mode (no
    B-frames), a keyframe every 2 s.
-3. The program audio (a Web Audio `MediaStreamAudioDestinationNode`) is read
-   as `AudioData` and encoded to AAC-LC. A silent constant source keeps the
-   bus alive, because a destination with no active input emits no audio data
-   at all.
+3. The program audio bus is captured by an AudioWorklet in 1024-frame
+   blocks, timestamped by mapping the audio clock to wall-clock time
+   (`AudioContext.getOutputTimestamp`), and encoded to AAC-LC in the worker.
+   A silent constant source keeps the bus rendering when nobody is on stage.
 4. Encoder warm-up: the first hardware encoder session can take seconds to
    start (measured 2.4 s for constant-bitrate H.264 and about 2 s for AAC on
    macOS), so the worker opens and closes one of each while the host prepares.

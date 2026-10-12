@@ -63,8 +63,9 @@ Lo script qui sopra evita questo passaggio.
 
 ## Primi passi
 
-1. Apri l'app **streamFree**: lo studio si apre in una sua finestra, e chiudendola streamFree si spegne.
-   - L'app mostra lo studio tramite **Chrome, Edge o Brave**, quindi uno dei tre deve essere installato (versione 100 o successiva).
+1. Apri l'app **streamFree**: ha una sua finestra, un'icona nel Dock o nella barra delle applicazioni e un menu; chiudendo la finestra si spegne.
+   - Su macOS e Windows lo studio gira nel motore web del sistema (WebKit su macOS, WebView2 su Windows), come Slack o VS Code: non serve un browser.
+   - Su Linux la finestra dell'app richiede Chrome, Edge o Brave.
    - Gli ospiti possono usare qualsiasi browser moderno.
    - Da terminale, `streamfree` apre invece lo studio come scheda del browser predefinito.
 2. Consenti videocamera e microfono.
@@ -89,11 +90,11 @@ I browser consentono la videocamera solo su pagine sicure (HTTPS), tranne che su
 ## Opzioni da riga di comando
 
 ```text
-streamfree [--app] [--port 8787] [--lan] [--tunnel] [--public-url URL]
+streamfree [--app [--browser]] [--port 8787] [--lan] [--tunnel] [--public-url URL]
            [--data-dir DIR] [--recordings-dir DIR] [--no-open]
 ```
 
-`--app` apre lo studio in una sua finestra e chiude tutto quando la finestra viene chiusa (è ciò che fa l'icona dell'app). Per esempio, `streamfree --app --lan` avvia l'app con ospiti dalla tua rete.
+`--app` apre lo studio nella finestra di streamFree e chiude tutto quando la finestra viene chiusa (è ciò che fa l'icona dell'app). Per esempio, `streamfree --app --lan` avvia l'app con ospiti dalla tua rete. Aggiungi `--browser` per usare invece una finestra di Chrome, Edge o Brave.
 
 Impostazioni, destinazioni e immagini caricate stanno nella cartella dati:
 
@@ -124,8 +125,8 @@ streamFree è giovane. Cosa è verificato, e come:
 Ancora da verificare:
 
 - **L'invio alle piattaforme reali** (YouTube, Twitch, Facebook…) non è ancora stato verificato dagli autori. Segnala cosa funziona per te.
-- **Condurre richiede l'encoder AAC del browser.** Verificato con Chrome su macOS. Su Windows (Chrome, Edge) dovrebbe funzionare tramite l'encoder di sistema, ma non è testato. Chrome su Linux sembra non includere un encoder AAC: su Linux streamFree funziona per gli ospiti ma non ancora per condurre, e in quel caso mostra un errore chiaro.
-- **Tab in background**: lo streaming è progettato per mantenere il frame rate anche con la tab dello studio in background, ma nessun test automatico lo copre ancora.
+- **Condurre richiede un encoder AAC nel motore web.** Verificato con l'app macOS (WebKit) e con Chrome su macOS. Su Windows (WebView2, Chrome, Edge) dovrebbe funzionare tramite l'encoder di sistema, ma non è testato. Chrome su Linux sembra non includere un encoder AAC: su Linux streamFree funziona per gli ospiti ma non ancora per condurre, e in quel caso mostra un errore chiaro.
+- **Finestre nascoste**: l'app macOS mantiene i 30 fps anche con la finestra ridotta a icona (verificato con lo smoke test integrato). Una scheda del browser in background non è coperta da test automatici.
 
 In programma, come da [docs/feature-spec.md](docs/feature-spec.md): registrazioni multitraccia per ospite, scene, uscita verticale, chat di YouTube, sfocatura dello sfondo e sottotitoli locali.
 

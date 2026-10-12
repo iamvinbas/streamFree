@@ -351,9 +351,11 @@ function restartLoop() {
 
 // ---------------------------------------------------------------- sources
 
-async function pump(id, readable) {
+// `track` is set when the track itself was transferred here (WebKit), so the
+// worker owns it and stops it on removal.
+async function pump(id, readable, track = null) {
   const reader = readable.getReader();
-  const entry = { reader, frame: null };
+  const entry = { reader, frame: null, track };
   const old = sources.get(id);
   if (old) removeSource(id, old);
   sources.set(id, entry);
@@ -382,6 +384,7 @@ function removeSource(id, entry = sources.get(id)) {
   if (!entry) return;
   sources.delete(id);
   entry.reader.cancel().catch(() => {});
+  entry.track?.stop();
   entry.frame?.close();
   entry.frame = null;
 }
@@ -464,10 +467,8 @@ async function start(opts) {
     sentBytes: 0,
     videoConfigSent: false,
     audioConfigSent: false,
-    audioIn0: null,
-    audioBase: 0,
     stopped: null,
-    audioReader: null,
+    audioPort: null,
   };
   enc = e;
   ws.onmessage = (m) => {
@@ -518,64 +519,57 @@ async function start(opts) {
   });
   e.video.configure(videoConfig);
 
-  e.audioReader = opts.audioReadable.getReader();
-  pumpAudio(e, opts.audioBitrate);
+  await setupAudio(e, opts.audioPort, opts.audioClock, opts.audioBitrate);
 
   e.t0 = performance.now();
   e.encoding = true;
   self.postMessage({ type: 'encoding', config: videoConfig });
 }
 
-async function pumpAudio(e, bitrate) {
-  let encoder = null;
-  try {
-    for (;;) {
-      const { value: data, done } = await e.audioReader.read();
-      if (done) break;
-      if (!e.encoding || enc !== e) {
-        data.close();
-        if (enc !== e) break;
-        continue;
-      }
-      if (!encoder) {
-        // Anchor audio to the video clock now, before any await: the first
-        // encoder setup can take seconds, and audio captured meanwhile waits
-        // in the stream. Taking the anchor later would delay all audio by
-        // that much and break lip sync.
-        e.audioIn0 = data.timestamp;
-        e.audioBase = (performance.now() - e.t0) * 1000;
-        const config = { codec: 'mp4a.40.2', sampleRate: data.sampleRate, numberOfChannels: data.numberOfChannels, bitrate };
-        const { supported } = await AudioEncoder.isConfigSupported(config);
-        if (!supported) {
-          data.close();
-          fail(e, 'This browser cannot encode AAC audio. Use Chrome or Edge on Windows or macOS.');
-          return;
-        }
-        encoder = new AudioEncoder({
-          output: (chunk, meta) => {
-            if (!e.audioConfigSent && meta?.decoderConfig?.description) {
-              e.audioConfigSent = true;
-              sendJSON({
-                type: 'audio-config',
-                sampleRate: config.sampleRate,
-                channels: config.numberOfChannels,
-                bitrate,
-                description: Array.from(new Uint8Array(meta.decoderConfig.description)),
-              });
-            }
-            if (e.audioConfigSent) sendChunk(4, chunk, chunk.timestamp - e.audioIn0 + e.audioBase);
-          },
-          error: (err) => fail(e, `audio encoder: ${err.message}`),
+// Program audio arrives from the capture worklet as 1024-frame planar
+// blocks tagged with their audio-context frame. `clock` maps context time to
+// wall-clock time, which puts audio on the same timeline as the video frames
+// (the worker and the page have different performance.timeOrigin values).
+async function setupAudio(e, port, clock, bitrate) {
+  const config = { codec: 'mp4a.40.2', sampleRate: clock.sampleRate, numberOfChannels: 2, bitrate };
+  const { supported } = await AudioEncoder.isConfigSupported(config);
+  if (!supported) throw new Error('This browser cannot encode AAC audio.');
+  const encoder = new AudioEncoder({
+    output: (chunk, meta) => {
+      if (!e.audioConfigSent && meta?.decoderConfig?.description) {
+        e.audioConfigSent = true;
+        sendJSON({
+          type: 'audio-config',
+          sampleRate: config.sampleRate,
+          channels: config.numberOfChannels,
+          bitrate,
+          description: Array.from(new Uint8Array(meta.decoderConfig.description)),
         });
-        encoder.configure(config);
-        e.audio = encoder;
       }
-      encoder.encode(data);
-      data.close();
-    }
-  } catch (err) {
-    if (enc === e) fail(e, `audio: ${err.message}`);
-  }
+      if (e.audioConfigSent) sendChunk(4, chunk, chunk.timestamp);
+    },
+    error: (err) => fail(e, `audio encoder: ${err.message}`),
+  });
+  encoder.configure(config);
+  e.audio = encoder;
+  e.audioPort = port;
+  port.onmessage = ({ data: block }) => {
+    if (!e.encoding || enc !== e || encoder.state !== 'configured') return;
+    const wallMs = clock.wallMs + (block.frame / clock.sampleRate - clock.contextTime) * 1000;
+    const ptsUs = Math.round((wallMs - (performance.timeOrigin + e.t0)) * 1000);
+    if (ptsUs < 0) return;
+    const frames = block.data.length / 2;
+    const audio = new AudioData({
+      format: 'f32-planar',
+      sampleRate: clock.sampleRate,
+      numberOfFrames: frames,
+      numberOfChannels: 2,
+      timestamp: ptsUs,
+      data: block.data,
+    });
+    encoder.encode(audio);
+    audio.close();
+  };
 }
 
 function fail(e, message) {
@@ -593,7 +587,7 @@ function teardown(e) {
       // already closing
     }
   }
-  e.audioReader?.cancel().catch(() => {});
+  if (e.audioPort) e.audioPort.onmessage = null;
   for (const coder of [e.video, e.audio]) {
     try {
       if (coder && coder.state !== 'closed') coder.close();
@@ -687,6 +681,9 @@ self.onmessage = async (event) => {
       case 'source':
         pump(m.id, m.readable);
         break;
+      case 'source-track':
+        pump(m.id, new MediaStreamTrackProcessor({ track: m.track }).readable, m.track);
+        break;
       case 'remove-source':
         removeSource(m.id);
         break;
@@ -723,6 +720,7 @@ self.onmessage = async (event) => {
           videoConfigSent: !!enc?.videoConfigSent,
           audioConfigSent: !!enc?.audioConfigSent,
           audioState: enc?.audio?.state || 'none',
+          hasTrackProcessor: typeof MediaStreamTrackProcessor !== 'undefined',
         });
         break;
     }

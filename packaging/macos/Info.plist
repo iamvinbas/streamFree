@@ -22,9 +22,6 @@
   <string>11.0</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.video</string>
-  <!-- The window is a browser window; this process only runs the server. -->
-  <key>LSUIElement</key>
-  <true/>
   <!-- macOS attributes the studio's camera and microphone use to this app and
        terminates it if these descriptions are missing. -->
   <key>NSCameraUsageDescription</key>
