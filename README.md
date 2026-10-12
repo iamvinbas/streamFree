@@ -108,7 +108,7 @@ streamFree is young. What is verified, and how:
 Still unverified:
 
 - **Real platform ingest** (YouTube, Twitch, Facebook…) has not been verified by the authors yet. Please report what works for you.
-- **AAC audio** comes from the browser's encoder. Chrome and Edge on macOS and Windows provide it. Chrome on Linux may not; streamFree tells you if so.
+- **Hosting needs the browser's AAC encoder.** Verified with Chrome on macOS. Windows (Chrome, Edge) is expected to work through the system encoder but is untested. Chrome on Linux appears to ship no AAC encoder, so on Linux streamFree works for guests but not yet for hosting; it shows a clear error if so.
 - **Background tabs**: streaming is designed to keep its frame rate when the studio tab is in the background, but this is not yet covered by an automated test.
 
 Planned work is listed in [docs/feature-spec.md](docs/feature-spec.md): per-guest multi-track recordings, scenes, vertical output, YouTube chat, background blur and local captions.
@@ -122,7 +122,7 @@ cargo test                     # unit tests (+ FFmpeg-oracle tests if ffmpeg is 
 cd tests/e2e && npm install && npm test   # browser tests (needs Google Chrome and ffmpeg)
 ```
 
-Requires Rust 1.80 or newer. The web studio is plain HTML/CSS/JavaScript in `web/`, embedded into the binary at build time.
+Requires Rust 1.88 or newer (the minimum declared by the dependencies; developed with 1.99). The web studio is plain HTML/CSS/JavaScript in `web/`, embedded into the binary at build time.
 
 ## License
 

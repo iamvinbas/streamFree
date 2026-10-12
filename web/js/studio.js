@@ -650,7 +650,13 @@ function goLiveDialog() {
   );
 }
 
-function inviteDialog() {
+async function inviteDialog() {
+  // The public address (tunnel) can appear after the studio loaded.
+  try {
+    info = await api.get('/api/info');
+  } catch {
+    // keep the last known address
+  }
   const url = info.inviteUrl;
   const local = !info.publicUrl && !info.lanUrl;
   openDialog(
