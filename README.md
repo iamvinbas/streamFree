@@ -9,7 +9,7 @@ Invite guests from a link, add your branding, and stream to YouTube, Twitch,
 Facebook and any RTMP server at once, while recording to your computer.
 One small download, no account, no watermark, no time limits.
 
-**English** · [Italiano](README.it.md)
+**[Website and downloads](https://iamvinbas.github.io/streamFree/)** · **English** · [Italiano](README.it.md)
 
 </div>
 

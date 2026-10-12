@@ -10,7 +10,7 @@ Twitch, Facebook e qualsiasi server RTMP contemporaneamente, registrando sul
 tuo computer. Un solo piccolo download, nessun account, nessun watermark,
 nessun limite di tempo.
 
-[English](README.md) · **Italiano**
+**[Sito e download](https://iamvinbas.github.io/streamFree/)** · [English](README.md) · **Italiano**
 
 </div>
 

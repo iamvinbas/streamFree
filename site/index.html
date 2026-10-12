@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="it" data-lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>streamFree — Studio di live streaming gratuito e locale</title>
+  <meta name="description" content="Lo studio di live streaming gratuito e open source che gira sul tuo computer: ospiti con un link, multistreaming su YouTube, Twitch e Facebook, registrazione MP4. Nessun account, nessun watermark.">
+  <meta name="theme-color" content="#faf9ff">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="streamFree — free, local live-streaming studio">
+  <meta property="og:description" content="Invite guests from a link, multistream to YouTube, Twitch and Facebook, record to MP4. Free, open source, runs on your computer.">
+  <meta property="og:image" content="https://iamvinbas.github.io/streamFree/assets/og.png">
+  <meta property="og:url" content="https://iamvinbas.github.io/streamFree/">
+  <meta name="twitter:card" content="summary_large_image">
+  <style>
+    :root {
+      --bg: #faf9ff;
+      --surface: #ffffff;
+      --ink: #1a1530;
+      --muted: #6b6480;
+      --line: #ebe7f7;
+      --accent: #6d5efc;
+      --accent-dark: #5a49f0;
+      --accent-soft: #efecff;
+      --accent-ink: #4a3bd6;
+      --night: #17132b;
+      --night-2: #221d3d;
+      --ok: #16a34a;
+      --no: #dc2626;
+      --radius: 16px;
+      --shadow: 0 1px 2px rgba(26, 21, 48, 0.04), 0 8px 24px rgba(26, 21, 48, 0.06);
+      color-scheme: light;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    html[data-lang="it"] [lang="en"], html[data-lang="en"] [lang="it"] { display: none !important; }
+    a { color: var(--accent-ink); }
+    img { max-width: 100%; display: block; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .wrap { width: min(1080px, 100% - 32px); margin: 0 auto; }
+    .center { text-align: center; }
+
+    /* nav */
+    .nav { position: sticky; top: 0; z-index: 10; background: rgba(250, 249, 255, 0.86); backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--line); }
+    .nav .wrap { display: flex; align-items: center; gap: 24px; height: 64px; }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; color: var(--ink); text-decoration: none; letter-spacing: -0.01em; }
+    .logo img { width: 30px; height: 30px; }
+    .nav-links { margin-left: auto; display: flex; gap: 22px; align-items: center; }
+    .nav-links a { color: var(--ink); text-decoration: none; font-weight: 500; font-size: 15px; }
+    .nav-links a:hover { color: var(--accent-ink); }
+    .lang { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--surface); }
+    .lang button { border: 0; background: none; padding: 5px 12px; font: 600 13px/1.4 inherit; font-family: inherit; color: var(--muted); cursor: pointer; }
+    .lang button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+
+    /* hero */
+    .hero { position: relative; padding: 72px 0 84px; overflow: hidden; }
+    .hero::before { content: ""; position: absolute; inset: -200px -10% auto; height: 760px; background: radial-gradient(closest-side, rgba(109, 94, 252, 0.16), rgba(109, 94, 252, 0)); pointer-events: none; }
+    .hero .wrap { position: relative; }
+    .hero-icon { width: 128px; height: 128px; margin: 0 auto 28px; filter: drop-shadow(0 18px 40px rgba(109, 94, 252, 0.35)); }
+    h1 { font-size: clamp(48px, 9vw, 76px); line-height: 1; font-weight: 900; letter-spacing: -0.045em; margin: 0 0 22px; }
+    h1 .free { color: var(--accent); }
+    .tagline { font-size: clamp(19px, 2.6vw, 23px); font-weight: 700; margin: 0 auto 12px; max-width: 760px; letter-spacing: -0.01em; }
+    .lead { color: var(--muted); font-size: 17px; max-width: 640px; margin: 0 auto 26px; }
+    .lead strong { color: var(--ink); }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 30px; }
+    .badge { padding: 6px 13px; border-radius: 999px; background: var(--accent-soft); border: 1px solid #dcd6ff; color: var(--accent-ink); font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+    .stats { display: flex; gap: 44px; justify-content: center; flex-wrap: wrap; margin-bottom: 34px; }
+    .stat b { display: block; font-size: 30px; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; line-height: 1.2; }
+    .stat span { font-size: 13px; color: var(--muted); font-weight: 600; }
+    .ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: 9px; padding: 13px 22px; border-radius: 12px; font-weight: 700; font-size: 16px; text-decoration: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); cursor: pointer; transition: transform 0.12s, box-shadow 0.12s, background 0.12s; font-family: inherit; }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(26, 21, 48, 0.1); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.primary:hover { background: var(--accent-dark); }
+    .btn.small { padding: 9px 14px; font-size: 14px; border-radius: 10px; box-shadow: none; }
+    .btn svg { width: 18px; height: 18px; flex: none; }
+    .fine { margin-top: 18px; color: var(--muted); font-size: 14px; }
+    :focus-visible { outline: 3px solid rgba(109, 94, 252, 0.45); outline-offset: 2px; }
+
+    /* sections */
+    section { padding: 88px 0; }
+    section.alt { background: var(--surface); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    h2 { font-size: clamp(30px, 4.4vw, 40px); font-weight: 900; letter-spacing: -0.03em; line-height: 1.1; margin: 0 0 12px; text-align: center; }
+    .sub { text-align: center; color: var(--muted); max-width: 640px; margin: 0 auto 44px; font-size: 17px; }
+
+    /* download */
+    .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .platform { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px 22px 24px; text-align: center; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; position: relative; }
+    .platform.yours { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(109, 94, 252, 0.14), var(--shadow); }
+    .platform .yours-tag { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 10px; border-radius: 999px; display: none; }
+    .platform.yours .yours-tag { display: block; }
+    .platform svg.os { width: 44px; height: 44px; margin: 0 auto 4px; color: var(--accent); }
+    .platform h3 { margin: 0; font-size: 20px; font-weight: 800; }
+    .platform p { margin: 0 0 10px; color: var(--muted); font-size: 14px; min-height: 44px; }
+    .platform .btn { justify-content: center; width: 100%; }
+    .platform .more { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; font-size: 13px; }
+    .version { text-align: center; color: var(--muted); font-size: 14px; margin: 22px 0 0; }
+    .terminal { margin: 34px auto 0; max-width: 820px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow); }
+    .terminal h3 { margin: 0 0 4px; font-size: 17px; }
+    .terminal > p { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+    .cmd { display: flex; align-items: center; gap: 10px; background: var(--night); color: #e9e6ff; border-radius: 12px; padding: 12px 12px 12px 16px; margin-top: 10px; }
+    .cmd small { color: #a49dc9; font-weight: 700; font-size: 12px; min-width: 112px; }
+    .cmd code { flex: 1; font-size: 13.5px; overflow-x: auto; white-space: nowrap; }
+    .cmd button { flex: none; border: 0; border-radius: 9px; background: var(--accent); color: #fff; font: 700 13px/1 inherit; font-family: inherit; padding: 9px 12px; cursor: pointer; }
+    .notes { max-width: 820px; margin: 18px auto 0; color: var(--muted); font-size: 14px; display: grid; gap: 6px; }
+
+    /* screenshot */
+    .window { max-width: 1000px; margin: 0 auto; border-radius: 14px; overflow: hidden; box-shadow: 0 30px 80px rgba(26, 21, 48, 0.22), 0 0 0 1px rgba(26, 21, 48, 0.08); background: #0d0f14; }
+    .window-bar { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 14px; background: #1b1d27; }
+    .window-bar i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+    .window-bar i:nth-child(2) { background: #febc2e; }
+    .window-bar i:nth-child(3) { background: #28c840; }
+    .window-bar span { margin: 0 auto; color: #9aa0b4; font-size: 12px; font-weight: 600; transform: translateX(-26px); }
+
+    /* steps */
+    .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 36px; }
+    .step { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 18px; text-align: center; box-shadow: var(--shadow); }
+    .step .n { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; display: grid; place-items: center; margin: 0 auto 12px; }
+    .step h3 { margin: 0 0 6px; font-size: 17px; }
+    .step p { margin: 0; color: var(--muted); font-size: 14px; }
+    .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+    .diagram svg { width: 100%; height: auto; display: block; }
+
+    /* features */
+    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .feature { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
+    .feature .emoji { font-size: 26px; line-height: 1; margin-bottom: 12px; }
+    .feature h3 { margin: 0 0 6px; font-size: 17px; }
+    .feature p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+    /* compare */
+    .table-wrap { overflow-x: auto; border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 15px; min-width: 620px; }
+    th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--line); }
+    thead th { background: var(--night); color: #fff; font-weight: 700; font-size: 14px; }
+    thead th.us { background: var(--accent); }
+    td.us { background: var(--accent-soft); font-weight: 700; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td:first-child { color: var(--muted); font-weight: 600; }
+    .yes { color: var(--ok); font-weight: 800; }
+    .no { color: var(--no); font-weight: 800; }
+    .source { text-align: center; color: var(--muted); font-size: 13px; margin-top: 14px; }
+
+    /* faq */
+    .faq { max-width: 780px; margin: 0 auto; display: grid; gap: 10px; }
+    details { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 4px 20px; box-shadow: var(--shadow); }
+    summary { cursor: pointer; font-weight: 700; padding: 14px 0; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "+"; color: var(--accent); font-size: 22px; line-height: 1; }
+    details[open] summary::after { content: "–"; }
+    details p { margin: 0 0 16px; color: var(--muted); }
+    details code { background: var(--accent-soft); padding: 1px 6px; border-radius: 6px; font-size: 0.9em; color: var(--accent-ink); }
+
+    /* footer */
+    footer { background: var(--night); color: #cfcaea; padding: 56px 0 44px; text-align: center; }
+    footer img { width: 56px; height: 56px; margin: 0 auto 18px; }
+    footer .links { display: flex; gap: 22px; justify-content: center; flex-wrap: wrap; margin-bottom: 18px; }
+    footer a { color: #b9b0ff; font-weight: 600; text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+    footer p { margin: 6px 0; font-size: 14px; }
+    footer .small { color: #8f88b3; font-size: 13px; }
+
+    @media (max-width: 900px) {
+      .platforms, .features { grid-template-columns: 1fr; }
+      .steps { grid-template-columns: 1fr 1fr; }
+      .platform p { min-height: 0; }
+    }
+    @media (max-width: 640px) {
+      .nav-links a { display: none; }
+      .steps { grid-template-columns: 1fr; }
+      .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 12px; }
+      section { padding: 64px 0; }
+      .cmd { flex-wrap: wrap; }
+      .cmd small { min-width: 0; width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn { transition: none; } }
+  </style>
+</head>
+<body>
+  <nav class="nav" aria-label="Principale">
+    <div class="wrap">
+      <a class="logo" href="#top"><img src="assets/icon.svg" alt="" width="30" height="30">streamFree</a>
+      <div class="nav-links">
+        <a href="#download">Download</a>
+        <a href="#how"><span lang="it">Come funziona</span><span lang="en">How it works</span></a>
+        <a href="#features"><span lang="it">Funzionalità</span><span lang="en">Features</span></a>
+        <a href="#faq">FAQ</a>
+        <a href="https://github.com/iamvinbas/streamFree">GitHub</a>
+        <div class="lang" role="group" aria-label="Lingua / Language">
+          <button type="button" data-set-lang="it" aria-pressed="true">IT</button>
+          <button type="button" data-set-lang="en" aria-pressed="false">EN</button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero center" id="top">
+    <div class="wrap">
+      <img class="hero-icon" src="assets/icon.svg" alt="" width="128" height="128">
+      <h1>stream<span class="free">Free</span></h1>
+      <p class="tagline">
+        <span lang="it">Lo studio di live streaming gratuito che gira sul tuo computer</span>
+        <span lang="en">The free live-streaming studio that runs on your computer</span>
+      </p>
+      <p class="lead">
+        <span lang="it"><strong>Invita ospiti con un link, trasmetti ovunque, registra tutto.</strong> YouTube, Twitch, Facebook e qualsiasi server RTMP insieme, con il tuo logo e i tuoi banner. Nessun account, nessun abbonamento, nessun watermark.</span>
+        <span lang="en"><strong>Invite guests from a link, stream everywhere, record everything.</strong> YouTube, Twitch, Facebook and any RTMP server at once, with your logo and banners. No account, no subscription, no watermark.</span>
+      </p>
+      <div class="badges">
+        <span class="badge"><span lang="it">100% locale</span><span lang="en">100% local</span></span>
+        <span class="badge">Open source · MIT</span>
+        <span class="badge"><span lang="it">Nessun account</span><span lang="en">No account</span></span>
+        <span class="badge"><span lang="it">Nessun watermark</span><span lang="en">No watermark</span></span>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>&lt; 4 MB</b><span>download</span></div>
+        <div class="stat"><b>16</b><span lang="it">ospiti</span><span lang="en">guests</span></div>
+        <div class="stat"><b>∞</b><span lang="it">destinazioni</span><span lang="en">destinations</span></div>
+        <div class="stat"><b>1080p60</b><span lang="it">qualità</span><span lang="en">quality</span></div>
+      </div>
+      <div class="ctas">
+        <a class="btn primary" href="#download">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12M6 11l6 6 6-6M5 20h14"/></svg>
+          <span lang="it">Scarica l'app</span><span lang="en">Download the app</span>
+        </a>
+        <a class="btn" href="https://github.com/iamvinbas/streamFree">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+          GitHub
+        </a>
+        <a class="btn" href="https://github.com/iamvinbas/streamFree#readme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+          <span lang="it">Documentazione</span><span lang="en">Documentation</span>
+        </a>
+      </div>
+      <p class="fine"><span lang="it">Gratis per sempre · MIT · nessuna telemetria</span><span lang="en">Free forever · MIT · no telemetry</span></p>
+    </div>
+  </header>
+
+  <section id="download" class="alt">
+    <div class="wrap">
+      <h2><span lang="it">Scarica streamFree</span><span lang="en">Download streamFree</span></h2>
+      <p class="sub">
+        <span lang="it">Un'app vera, con la sua finestra. Installi, apri, sei in onda. Gli ospiti non installano niente: entrano dal browser.</span>
+        <span lang="en">A real app with its own window. Install, open, you're on air. Guests install nothing: they join from their browser.</span>
+      </p>
+      <div class="platforms">
+        <div class="platform" data-os="mac">
+          <span class="yours-tag"><span lang="it">Il tuo sistema</span><span lang="en">Your system</span></span>
+          <svg class="os" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.37 12.77c-.02-2.3 1.88-3.4 1.96-3.46-1.07-1.56-2.73-1.77-3.32-1.8-1.41-.14-2.76.83-3.48.83-.72 0-1.83-.81-3-.79-1.55.02-2.97.9-3.77 2.28-1.6 2.78-.41 6.9 1.15 9.16.76 1.1 1.67 2.34 2.86 2.3 1.15-.05 1.58-.74 2.97-.74 1.38 0 1.77.74 2.98.72 1.24-.02 2.02-1.12 2.77-2.23.87-1.28 1.23-2.52 1.25-2.58-.03-.01-2.4-.92-2.42-3.65zM14.1 6.03c.63-.77 1.06-1.83.94-2.89-.91.04-2.01.61-2.66 1.37-.58.68-1.09 1.76-.95 2.8 1.01.08 2.04-.51 2.67-1.28z"/></svg>
+          <h3>macOS</h3>
+          <p><span lang="it">macOS 11 o successivo. Apri il .dmg e trascina streamFree in Applicazioni.</span><span lang="en">macOS 11 or later. Open the .dmg and drag streamFree into Applications.</span></p>
+          <a class="btn primary" href="https://github.com/iamvinbas/streamFree/releases/latest/download/streamFree-macOS-AppleSilicon.dmg"><span lang="it">Scarica per Apple Silicon</span><span lang="en">Download for Apple silicon</span></a>
+          <div class="more"><a href="https://github.com/iamvinbas/streamFree/releases/latest/download/streamFree-macOS-Intel.dmg"><span lang="it">Mac con processore Intel</span><span lang="en">Mac with an Intel processor</span></a></div>
+        </div>
+        <div class="platform" data-os="windows">
+          <span class="yours-tag"><span lang="it">Il tuo sistema</span><span lang="en">Your system</span></span>
+          <svg class="os" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.1 10.4 4v7.2H3zm0 13.8 7.4 1.1v-7.1H3zM11.3 3.9 21 2.5v8.7h-9.7zm0 16.2 9.7 1.4v-8.6h-9.7z"/></svg>
+          <h3>Windows</h3>
+          <p><span lang="it">Windows 10 e 11, 64 bit. Installer per utente, senza permessi di amministratore.</span><span lang="en">Windows 10 and 11, 64-bit. Per-user installer, no administrator rights.</span></p>
+          <a class="btn primary" href="https://github.com/iamvinbas/streamFree/releases/latest/download/streamFree-Windows-Setup.exe"><span lang="it">Scarica l'installer (.exe)</span><span lang="en">Download the installer (.exe)</span></a>
+          <div class="more"><a href="https://github.com/iamvinbas/streamFree/releases/latest/download/streamfree-x86_64-pc-windows-msvc.zip"><span lang="it">Versione portabile (.zip)</span><span lang="en">Portable version (.zip)</span></a></div>
+        </div>
+        <div class="platform" data-os="linux">
+          <span class="yours-tag"><span lang="it">Il tuo sistema</span><span lang="en">Your system</span></span>
+          <svg class="os" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5c-2.3 0-3.6 1.9-3.6 4.4 0 1.6.4 2.6-.6 4.2C6.5 13 5 15 5 17.3c0 1 .4 1.7 1 2.2"/><path d="M12 2.5c2.3 0 3.6 1.9 3.6 4.4 0 1.6-.4 2.6.6 4.2C17.5 13 19 15 19 17.3c0 1-.4 1.7-1 2.2"/><circle cx="10.4" cy="7" r=".7" fill="currentColor"/><circle cx="13.6" cy="7" r=".7" fill="currentColor"/><path d="M10.6 9.2c.8.6 2 .6 2.8 0"/><path d="M5.5 19.5c1.3 1.3 3.2 1.8 4.6 1 .7-.4 1.2-.5 1.9-.5s1.2.1 1.9.5c1.4.8 3.3.3 4.6-1"/></svg>
+          <h3>Linux</h3>
+          <p><span lang="it">x86-64 e ARM64. Lo studio si apre in una finestra di Chrome, Edge o Brave.</span><span lang="en">x86-64 and ARM64. The studio opens in a Chrome, Edge or Brave window.</span></p>
+          <a class="btn primary" href="https://github.com/iamvinbas/streamFree/releases/latest/download/streamfree-x86_64-unknown-linux-gnu.tar.gz"><span lang="it">Scarica per x86-64</span><span lang="en">Download for x86-64</span></a>
+          <div class="more"><a href="https://github.com/iamvinbas/streamFree/releases/latest/download/streamfree-aarch64-unknown-linux-gnu.tar.gz">ARM64</a></div>
+        </div>
+      </div>
+      <p class="version" id="version"><a href="https://github.com/iamvinbas/streamFree/releases"><span lang="it">Tutte le versioni e i checksum</span><span lang="en">All versions and checksums</span></a></p>
+
+      <div class="terminal">
+        <h3><span lang="it">Oppure installa con un comando</span><span lang="en">Or install with one command</span></h3>
+        <p><span lang="it">Scarica l'ultima versione, ne verifica il checksum SHA-256 e aggiunge l'app al sistema. Niente sudo.</span><span lang="en">Downloads the latest version, checks its SHA-256 checksum and adds the app to your system. No sudo.</span></p>
+        <div class="cmd"><small>macOS · Linux</small><code id="cmd-unix">curl -fsSL https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.sh | sh</code><button type="button" data-copy="cmd-unix"><span lang="it">Copia</span><span lang="en">Copy</span></button></div>
+        <div class="cmd"><small>Windows PowerShell</small><code id="cmd-win">irm https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.ps1 | iex</code><button type="button" data-copy="cmd-win"><span lang="it">Copia</span><span lang="en">Copy</span></button></div>
+      </div>
+      <div class="notes">
+        <span lang="it">🍎 <strong>macOS</strong>: l'app non è ancora notarizzata da Apple. La prima volta fai clic destro → <em>Apri</em> (oppure Impostazioni di Sistema → Privacy e sicurezza → <em>Apri comunque</em>).</span>
+        <span lang="en">🍎 <strong>macOS</strong>: the app is not notarized by Apple yet. The first time, right-click it → <em>Open</em> (or System Settings → Privacy &amp; Security → <em>Open Anyway</em>).</span>
+        <span lang="it">🪟 <strong>Windows</strong>: l'installer non è firmato. Se SmartScreen avvisa, scegli <em>Ulteriori informazioni</em> → <em>Esegui comunque</em>.</span>
+        <span lang="en">🪟 <strong>Windows</strong>: the installer is not signed. If SmartScreen warns you, choose <em>More info</em> → <em>Run anyway</em>.</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2><span lang="it">La tua regia, in una finestra</span><span lang="en">Your control room, in one window</span></h2>
+      <p class="sub"><span lang="it">Anteprima del programma, layout, persone in scena, banner e destinazioni: tutto a portata di clic.</span><span lang="en">Program preview, layouts, people on stage, banners and destinations: all one click away.</span></p>
+      <div class="window">
+        <div class="window-bar"><i></i><i></i><i></i><span>streamFree</span></div>
+        <img src="assets/studio.png" width="1440" height="900" loading="lazy" alt="The streamFree studio: two people on stage in a grid layout, a lower-third banner, a scrolling ticker, the layout picker and the banners panel.">
+      </div>
+    </div>
+  </section>
+
+  <section id="how" class="alt">
+    <div class="wrap">
+      <h2><span lang="it">Come funziona</span><span lang="en">How it works</span></h2>
+      <p class="sub"><span lang="it">Il tuo computer è la regia. Niente server di terzi in mezzo: i video degli ospiti arrivano a te, il tuo stream parte da te.</span><span lang="en">Your computer is the control room. No third-party servers in between: guests' video comes to you, and your stream leaves from you.</span></p>
+      <div class="diagram">
+        <svg viewBox="0 0 960 300" role="img" aria-labelledby="diagram-title">
+          <title id="diagram-title">Guests connect to streamFree on your computer, which streams to YouTube, Twitch, Facebook and any RTMP server and records an MP4 file.</title>
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#6d5efc"/></marker>
+          </defs>
+          <g font-family="-apple-system, Segoe UI, Roboto, sans-serif" font-size="14" fill="#1a1530">
+            <g>
+              <rect x="20" y="40" width="180" height="220" rx="16" fill="#faf9ff" stroke="#ebe7f7"/>
+              <text x="110" y="70" text-anchor="middle" font-weight="800"><tspan lang="it">Ospiti</tspan><tspan lang="en">Guests</tspan></text>
+              <g fill="#6d5efc"><circle cx="70" cy="120" r="18" opacity=".9"/><circle cx="150" cy="120" r="18" opacity=".7"/><circle cx="110" cy="185" r="18" opacity=".8"/></g>
+              <text x="110" y="238" text-anchor="middle" fill="#6b6480" font-size="12.5"><tspan lang="it">dal browser, con un link</tspan><tspan lang="en">from a browser link</tspan></text>
+            </g>
+            <line x1="204" y1="150" x2="350" y2="150" stroke="#6d5efc" stroke-width="2.5" marker-end="url(#arrow)"/>
+            <text x="277" y="138" text-anchor="middle" fill="#6b6480" font-size="12.5">WebRTC</text>
+            <g>
+              <rect x="356" y="55" width="248" height="190" rx="20" fill="#6d5efc"/>
+              <text x="480" y="100" text-anchor="middle" fill="#fff" font-weight="900" font-size="22">streamFree</text>
+              <text x="480" y="128" text-anchor="middle" fill="#e6e2ff" font-size="13"><tspan lang="it">sul tuo computer</tspan><tspan lang="en">on your computer</tspan></text>
+              <text x="480" y="168" text-anchor="middle" fill="#fff" font-size="13"><tspan lang="it">regia · grafica · mix audio</tspan><tspan lang="en">mixing · graphics · audio</tspan></text>
+              <text x="480" y="190" text-anchor="middle" fill="#fff" font-size="13"><tspan lang="it">encoder hardware H.264</tspan><tspan lang="en">hardware H.264 encoder</tspan></text>
+            </g>
+            <g stroke="#6d5efc" stroke-width="2.5" fill="none" marker-end="url(#arrow)">
+              <path d="M606 110 C680 110 690 60 742 60"/>
+              <path d="M606 135 C680 135 690 120 742 120"/>
+              <path d="M606 160 C680 160 690 180 742 180"/>
+              <path d="M606 185 C680 185 690 240 742 240"/>
+            </g>
+            <text x="672" y="40" text-anchor="middle" fill="#6b6480" font-size="12">RTMP(S)</text>
+            <g font-weight="700">
+              <rect x="746" y="40" width="194" height="40" rx="12" fill="#faf9ff" stroke="#ebe7f7"/><text x="843" y="65" text-anchor="middle">YouTube</text>
+              <rect x="746" y="100" width="194" height="40" rx="12" fill="#faf9ff" stroke="#ebe7f7"/><text x="843" y="125" text-anchor="middle">Twitch</text>
+              <rect x="746" y="160" width="194" height="40" rx="12" fill="#faf9ff" stroke="#ebe7f7"/><text x="843" y="185" text-anchor="middle">Facebook · LinkedIn · RTMP</text>
+              <rect x="746" y="220" width="194" height="40" rx="12" fill="#efecff" stroke="#dcd6ff"/><text x="843" y="245" text-anchor="middle" fill="#4a3bd6"><tspan lang="it">registrazione.mp4</tspan><tspan lang="en">recording.mp4</tspan></text>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <div class="steps">
+        <div class="step"><div class="n">1</div><h3><span lang="it">Apri l'app</span><span lang="en">Open the app</span></h3><p><span lang="it">Lo studio si apre nella sua finestra, con la tua fotocamera già pronta.</span><span lang="en">The studio opens in its own window, camera ready.</span></p></div>
+        <div class="step"><div class="n">2</div><h3><span lang="it">Invita gli ospiti</span><span lang="en">Invite guests</span></h3><p><span lang="it">Mandi un link: entrano nel backstage e li porti in scena quando vuoi.</span><span lang="en">Send a link: they wait backstage until you bring them on stage.</span></p></div>
+        <div class="step"><div class="n">3</div><h3><span lang="it">Scegli dove andare in onda</span><span lang="en">Pick where to go live</span></h3><p><span lang="it">Incolla le chiavi di YouTube, Twitch o di qualsiasi server RTMP. Restano sul tuo computer.</span><span lang="en">Paste keys for YouTube, Twitch or any RTMP server. They stay on your computer.</span></p></div>
+        <div class="step"><div class="n">4</div><h3><span lang="it">Vai in diretta</span><span lang="en">Go live</span></h3><p><span lang="it">Un clic: trasmetti ovunque insieme e registri in MP4.</span><span lang="en">One click: stream everywhere at once and record to MP4.</span></p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2><span lang="it">Tutto quello che serve a uno show</span><span lang="en">Everything a show needs</span></h2>
+      <p class="sub"><span lang="it">Le funzioni degli studi online in abbonamento, senza abbonamento e senza cloud.</span><span lang="en">What subscription studios offer, without the subscription or the cloud.</span></p>
+      <div class="features">
+        <div class="feature"><div class="emoji" aria-hidden="true">🎙️</div><h3><span lang="it">Ospiti con un link</span><span lang="en">Guests from a link</span></h3><p><span lang="it">Fino a 16 ospiti dal browser, con backstage, chat privata e audio senza eco per ciascuno.</span><span lang="en">Up to 16 guests from their browser, with a backstage, private chat and echo-free audio for each.</span></p></div>
+        <div class="feature"><div class="emoji" aria-hidden="true">📡</div><h3>Multistreaming</h3><p><span lang="it">Tutte le destinazioni che la tua connessione regge. Ognuna si riconnette da sola e una lenta non rallenta le altre.</span><span lang="en">As many destinations as your upload allows. Each reconnects on its own, and a slow one never holds the others back.</span></p></div>
+        <div class="feature"><div class="emoji" aria-hidden="true">💾</div><h3><span lang="it">Registrazione a prova di crash</span><span lang="en">Crash-safe recording</span></h3><p><span lang="it">MP4 scritto a frammenti: anche se il computer si spegne, il file resta riproducibile.</span><span lang="en">MP4 written in fragments: even if the computer dies, the file still plays.</span></p></div>
+        <div class="feature"><div class="emoji" aria-hidden="true">🎨</div><h3><span lang="it">Il tuo brand</span><span lang="en">Your brand</span></h3><p><span lang="it">Logo, overlay a tutto schermo, sfondi, colori e stili delle targhette con i nomi.</span><span lang="en">Logo, full-screen overlays, backgrounds, colours and name-tag styles.</span></p></div>
+        <div class="feature"><div class="emoji" aria-hidden="true">🏷️</div><h3><span lang="it">Banner e ticker</span><span lang="en">Banners and ticker</span></h3><p><span lang="it">Prepara i sottopancia prima della diretta e mostrali con un clic; testo scorrevole in basso.</span><span lang="en">Prepare lower thirds before the show and show them with one click; scrolling ticker.</span></p></div>
+        <div class="feature"><div class="emoji" aria-hidden="true">💬</div><h3><span lang="it">Commenti a schermo</span><span lang="en">Comments on screen</span></h3><p><span lang="it">Leggi la chat di Twitch e metti in onda un commento con un clic, o aggiungi domande a mano.</span><span lang="en">Read Twitch chat and put a comment on air with one click, or add questions by hand.</span></p></div>
+        <div class="feature"><div class="emoji" aria-hidden="true">🖥️</div><h3><span lang="it">Schermo e clip video</span><span lang="en">Screen and video clips</span></h3><p><span lang="it">Condividi lo schermo con il suo audio e manda intro, outro e clip a tutto schermo.</span><span lang="en">Share your screen with its audio and play intros, outros and clips full screen.</span></p></div>
+        <div class="feature"><div class="emoji" aria-hidden="true">🧩</div><h3><span lang="it">7 layout</span><span lang="en">7 layouts</span></h3><p><span lang="it">Singolo, griglia, affiancati, leader, picture in picture, presentazione, cinema.</span><span lang="en">Solo, grid, side by side, leader, picture in picture, presentation, cinema.</span></p></div>
+        <div class="feature"><div class="emoji" aria-hidden="true">🔒</div><h3><span lang="it">Privato per scelta</span><span lang="en">Private by design</span></h3><p><span lang="it">Nessun account e nessuna telemetria. Le chiavi di stream non lasciano mai il tuo computer.</span><span lang="en">No account and no telemetry. Stream keys never leave your computer.</span></p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt">
+    <div class="wrap">
+      <h2><span lang="it">Come si confronta</span><span lang="en">How it compares</span></h2>
+      <p class="sub"><span lang="it">Rispetto a uno studio online in abbonamento.</span><span lang="en">Compared with a subscription browser studio.</span></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th scope="col"></th><th scope="col" class="us">streamFree</th><th scope="col">StreamYard*</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span lang="it">Prezzo</span><span lang="en">Price</span></td><td class="us"><span lang="it">Gratis, per sempre</span><span lang="en">Free, forever</span></td><td><span lang="it">Gratis con limiti · da $44,99/mese</span><span lang="en">Free with limits · from $44.99/month</span></td></tr>
+            <tr><td>Account</td><td class="us"><span lang="it">Non serve</span><span lang="en">Not needed</span></td><td><span lang="it">Obbligatorio</span><span lang="en">Required</span></td></tr>
+            <tr><td>Watermark</td><td class="us"><span class="yes">✓</span> <span lang="it">Mai</span><span lang="en">Never</span></td><td><span lang="it">Logo sul piano gratuito</span><span lang="en">Logo on the free plan</span></td></tr>
+            <tr><td><span lang="it">Destinazioni insieme</span><span lang="en">Destinations at once</span></td><td class="us"><span lang="it">Illimitate</span><span lang="en">Unlimited</span></td><td><span lang="it">3–8 nei piani a pagamento</span><span lang="en">3–8 on paid plans</span></td></tr>
+            <tr><td><span lang="it">Persone in scena</span><span lang="en">People on screen</span></td><td class="us"><span lang="it">Fino a 16 ospiti</span><span lang="en">Up to 16 guests</span></td><td><span lang="it">6 (gratis) · 10 (a pagamento)</span><span lang="en">6 (free) · 10 (paid)</span></td></tr>
+            <tr><td><span lang="it">Registrazione locale</span><span lang="en">Local recording</span></td><td class="us"><span lang="it">Illimitata</span><span lang="en">Unlimited</span></td><td><span lang="it">2 ore/mese sul piano gratuito</span><span lang="en">2 hours/month on the free plan</span></td></tr>
+            <tr><td><span lang="it">Dove passano i tuoi video</span><span lang="en">Where your video goes</span></td><td class="us"><span lang="it">Dal tuo computer alle piattaforme</span><span lang="en">From your computer to the platforms</span></td><td><span lang="it">Attraverso il cloud del fornitore</span><span lang="en">Through the vendor's cloud</span></td></tr>
+            <tr><td><span lang="it">Codice sorgente</span><span lang="en">Source code</span></td><td class="us"><span class="yes">✓</span> <span lang="it">Aperto (MIT)</span><span lang="en">Open (MIT)</span></td><td><span class="no">✗</span> <span lang="it">Chiuso</span><span lang="en">Closed</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="source">
+        <span lang="it">* Dalla pagina prezzi pubblica di StreamYard, ottobre 2026. StreamYard è un marchio del rispettivo proprietario; streamFree non è affiliato.</span>
+        <span lang="en">* From StreamYard's public pricing page, October 2026. StreamYard is a trademark of its owner; streamFree is not affiliated.</span>
+      </p>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <h2><span lang="it">Domande frequenti</span><span lang="en">Questions</span></h2>
+      <p class="sub"></p>
+      <div class="faq">
+        <details>
+          <summary><span lang="it">È davvero gratis?</span><span lang="en">Is it really free?</span></summary>
+          <p><span lang="it">Sì. streamFree è open source con licenza MIT: niente piani a pagamento, limiti di tempo o watermark.</span><span lang="en">Yes. streamFree is open source under the MIT license: no paid plans, time limits or watermark.</span></p>
+        </details>
+        <details>
+          <summary><span lang="it">Gli ospiti devono installare qualcosa?</span><span lang="en">Do guests need to install anything?</span></summary>
+          <p><span lang="it">No: aprono il link di invito nel browser. Per ospiti sulla tua rete avvia streamFree con <code>streamfree --app --lan</code>; per ospiti da internet con <code>streamfree --app --tunnel</code> (serve <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/">cloudflared</a>).</span><span lang="en">No: they open the invite link in their browser. For guests on your network start streamFree with <code>streamfree --app --lan</code>; for guests on the internet with <code>streamfree --app --tunnel</code> (needs <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/">cloudflared</a>).</span></p>
+        </details>
+        <details>
+          <summary><span lang="it">Su quali piattaforme posso trasmettere?</span><span lang="en">Which platforms can I stream to?</span></summary>
+          <p><span lang="it">Qualsiasi servizio che accetta RTMP o RTMPS: YouTube, Twitch, Facebook, LinkedIn, Kick, X o il tuo server. Anche tutte insieme.</span><span lang="en">Any service that accepts RTMP or RTMPS: YouTube, Twitch, Facebook, LinkedIn, Kick, X or your own server. All at once, too.</span></p>
+        </details>
+        <details>
+          <summary><span lang="it">Perché macOS dice che lo sviluppatore non è verificato?</span><span lang="en">Why does macOS say the developer cannot be verified?</span></summary>
+          <p><span lang="it">L'app non è ancora notarizzata da Apple. La prima volta fai clic destro sull'app → Apri, oppure Impostazioni di Sistema → Privacy e sicurezza → Apri comunque. L'installazione con il comando evita il passaggio.</span><span lang="en">The app is not notarized by Apple yet. The first time, right-click the app → Open, or System Settings → Privacy &amp; Security → Open Anyway. Installing with the command avoids this step.</span></p>
+        </details>
+        <details>
+          <summary><span lang="it">Dove finiscono le registrazioni?</span><span lang="en">Where do recordings go?</span></summary>
+          <p><span lang="it">Nella cartella Filmati/streamFree su macOS e Video/streamFree su Windows e Linux. Dalla finestra di fine registrazione puoi aprirla con un clic.</span><span lang="en">In Movies/streamFree on macOS and Videos/streamFree on Windows and Linux. The end-of-recording dialog opens it with one click.</span></p>
+        </details>
+        <details>
+          <summary><span lang="it">Che fine fanno i miei dati?</span><span lang="en">What happens to my data?</span></summary>
+          <p><span lang="it">Restano sul tuo computer. streamFree non ha server suoi e non raccoglie statistiche: i video vanno solo dove scegli tu.</span><span lang="en">They stay on your computer. streamFree has no servers of its own and collects no statistics: video only goes where you send it.</span></p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <img src="assets/icon.svg" alt="" width="56" height="56">
+      <div class="links">
+        <a href="https://github.com/iamvinbas/streamFree">GitHub</a>
+        <a href="#download">Download</a>
+        <a href="https://github.com/iamvinbas/streamFree#readme"><span lang="it">Documentazione</span><span lang="en">Documentation</span></a>
+        <a href="https://github.com/iamvinbas/streamFree/releases"><span lang="it">Versioni</span><span lang="en">Releases</span></a>
+        <a href="https://github.com/iamvinbas/streamFree/issues"><span lang="it">Segnala un problema</span><span lang="en">Report an issue</span></a>
+      </div>
+      <p><span lang="it">Rilasciato con licenza</span><span lang="en">Released under the</span> <strong>MIT</strong> <span lang="en">license</span> · © 2026 iamvinbas</p>
+      <p class="small"><span lang="it">Progetto indipendente, non affiliato alle piattaforme citate. I nomi sono marchi dei rispettivi proprietari.</span><span lang="en">An independent project, not affiliated with the platforms mentioned. Names are trademarks of their owners.</span></p>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      function setLang(lang) {
+        root.dataset.lang = lang;
+        root.lang = lang;
+        document.querySelectorAll('[data-set-lang]').forEach(function (b) {
+          b.setAttribute('aria-pressed', String(b.dataset.setLang === lang));
+        });
+        try { localStorage.setItem('streamfree-site-lang', lang); } catch (e) { /* not persisted */ }
+      }
+      var saved = null;
+      try { saved = localStorage.getItem('streamfree-site-lang'); } catch (e) { /* ignore */ }
+      setLang(saved || ((navigator.language || 'en').toLowerCase().indexOf('it') === 0 ? 'it' : 'en'));
+      document.querySelectorAll('[data-set-lang]').forEach(function (b) {
+        b.addEventListener('click', function () { setLang(b.dataset.setLang); });
+      });
+
+      // Highlight the visitor's own system.
+      var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+      var os = /mac/i.test(ua) ? 'mac' : /win/i.test(ua) ? 'windows' : /linux|x11/i.test(ua) ? 'linux' : null;
+      if (os) {
+        var card = document.querySelector('.platform[data-os="' + os + '"]');
+        if (card) card.classList.add('yours');
+      }
+
+      document.querySelectorAll('[data-copy]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var text = document.getElementById(b.dataset.copy).textContent;
+          navigator.clipboard.writeText(text).then(function () {
+            var old = b.innerHTML;
+            b.textContent = root.dataset.lang === 'it' ? 'Copiato ✓' : 'Copied ✓';
+            setTimeout(function () { b.innerHTML = old; }, 1600);
+          });
+        });
+      });
+
+      // Show the latest version, when GitHub answers.
+      fetch('https://api.github.com/repos/iamvinbas/streamFree/releases/latest')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (rel) {
+          if (!rel || !rel.tag_name) return;
+          var date = new Date(rel.published_at);
+          var el = document.getElementById('version');
+          var fmt = function (l) { return date.toLocaleDateString(l, { day: 'numeric', month: 'long', year: 'numeric' }); };
+          el.innerHTML = '<span lang="it">Ultima versione <strong>' + rel.tag_name + '</strong> · ' + fmt('it-IT') + ' · </span>' +
+            '<span lang="en">Latest version <strong>' + rel.tag_name + '</strong> · ' + fmt('en-GB') + ' · </span>' + el.innerHTML;
+        })
+        .catch(function () { /* offline: keep the plain link */ });
+    })();
+  </script>
+</body>
+</html>

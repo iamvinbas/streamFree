@@ -1,4 +1,14 @@
-## Install
+## Download
+
+**Website:** https://iamvinbas.github.io/streamFree/
+
+| System | File |
+|---|---|
+| macOS, Apple silicon | `streamFree-macOS-AppleSilicon.dmg` |
+| macOS, Intel | `streamFree-macOS-Intel.dmg` |
+| Windows 10/11 | `streamFree-Windows-Setup.exe` |
+
+## Install from a terminal
 
 **macOS and Linux**
 

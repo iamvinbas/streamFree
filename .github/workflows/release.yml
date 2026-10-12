@@ -59,6 +59,28 @@ jobs:
             (cd dist && shasum -a 256 "$file" > "$file.sha256")
           fi
           cat "dist/$file.sha256"
+      - name: Disk image (macOS)
+        if: endsWith(matrix.target, 'apple-darwin')
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="target/${{ matrix.target }}/release"
+          kind=$([[ "${{ matrix.target }}" == aarch64-* ]] && echo AppleSilicon || echo Intel)
+          packaging/macos/make-app.sh "$bin_dir/streamfree" "$RUNNER_TEMP" "${GITHUB_REF_NAME#v}"
+          dmg="dist/streamFree-macOS-$kind.dmg"
+          packaging/macos/make-dmg.sh "$RUNNER_TEMP/streamFree.app" "$dmg"
+          (cd dist && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256")
+      - name: Installer (Windows)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress | Out-Null
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          & $iscc "/DAppVersion=$version" "/DExePath=..\..\target\${{ matrix.target }}\release\streamfree.exe" packaging\windows\streamfree.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $hash = (Get-FileHash dist\streamFree-Windows-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  streamFree-Windows-Setup.exe" | Out-File -Encoding ascii dist\streamFree-Windows-Setup.exe.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -78,6 +100,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -la dist
-          gh release create "${GITHUB_REF_NAME}" dist/* \
+          flags=""
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then flags="--prerelease"; fi
+          gh release create "${GITHUB_REF_NAME}" dist/* $flags \
             --title "streamFree ${GITHUB_REF_NAME}" \
             --notes-file .github/release-notes.md
