@@ -12,13 +12,14 @@ Un'app desktop sotto i 5 MB, senza account, abbonamento né watermark.
 
 [![Ultima versione](https://img.shields.io/github/v/release/iamvinbas/streamFree?color=6d5efc&label=versione)](https://github.com/iamvinbas/streamFree/releases/latest)
 [![CI](https://github.com/iamvinbas/streamFree/actions/workflows/ci.yml/badge.svg)](https://github.com/iamvinbas/streamFree/actions/workflows/ci.yml)
+[![Download](https://img.shields.io/github/downloads/iamvinbas/streamFree/total?color=6d5efc&label=download)](https://github.com/iamvinbas/streamFree/releases)
 [![Licenza: MIT](https://img.shields.io/badge/licenza-MIT-6d5efc)](LICENSE)
 
 **[Sito](https://iamvinbas.github.io/streamFree/)** · **[Download](#download)** · [English](README.md) · **Italiano**
 
 </div>
 
-![Lo studio di streamFree: due persone in scena, un banner, un ticker e il pannello dei banner](docs/assets/studio.jpg)
+![streamFree in azione: banner, layout, ticker, un commento a schermo e la finestra di invito con il QR code](docs/assets/demo.gif)
 
 ## Download
 
@@ -207,6 +208,17 @@ Serve Rust 1.88 o successivo. Lo studio (`web/`) è HTML, CSS e JavaScript sempl
 | `docs/` | Architettura, mappa delle funzionalità, riferimenti |
 
 **Pubblicare una versione.** Fai push di un tag, per esempio `v0.4.0`. GitHub Actions compila per macOS (arm64, x64), Windows e Linux (x64, arm64), crea i `.dmg` e l'installer Windows e li pubblica con i checksum. I tag con un trattino (`v0.4.0-rc.1`) diventano pre-release.
+
+## Contribuire
+
+Issue, idee e pull request sono benvenute; vedi [CONTRIBUTING.md](CONTRIBUTING.md).
+L'aiuto più utile adesso sono le prove:
+
+- su **Windows**;
+- con una **chiave di stream vera**;
+- con **ospiti da telefono**.
+
+Se streamFree ti è utile, una ⭐ aiuta altre persone a trovarlo.
 
 ## Licenza
 

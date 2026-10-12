@@ -128,6 +128,7 @@
     .window-bar i:nth-child(2) { background: #febc2e; }
     .window-bar i:nth-child(3) { background: #28c840; }
     .window-bar span { margin: 0 auto; color: #9aa0b4; font-size: 12px; font-weight: 600; transform: translateX(-26px); }
+    .window video { display: block; width: 100%; height: auto; }
 
     /* steps */
     .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 36px; }
@@ -309,7 +310,7 @@
       <p class="sub"><span lang="it">Anteprima del programma, layout, persone in scena, banner e destinazioni: tutto a portata di clic.</span><span lang="en">Program preview, layouts, people on stage, banners and destinations: all one click away.</span></p>
       <div class="window">
         <div class="window-bar"><i></i><i></i><i></i><span>streamFree</span></div>
-        <img src="assets/studio-1440.jpg" srcset="assets/studio-1440.jpg 1440w, assets/studio-2880.jpg 2880w" sizes="(max-width: 1032px) calc(100vw - 32px), 1000px" width="1440" height="900" loading="lazy" alt="The streamFree studio: host and guest on stage in a grid layout with a logo, a lower-third banner and a scrolling ticker; below, the layout picker and the people on stage; on the right, the banners panel.">
+        <video id="demo" src="assets/demo.mp4" poster="assets/demo-poster.jpg" width="1280" height="712" autoplay muted loop playsinline preload="metadata" aria-label="streamFree in action: a banner slides in, the layout changes, a ticker and a viewer comment appear, and the invite window shows its QR code."></video>
       </div>
     </div>
   </section>
@@ -483,6 +484,12 @@
       document.querySelectorAll('[data-set-lang]').forEach(function (b) {
         b.addEventListener('click', function () { setLang(b.dataset.setLang); });
       });
+
+      // Respect reduced motion: no autoplaying demo.
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        var demo = document.getElementById('demo');
+        if (demo) { demo.removeAttribute('autoplay'); demo.pause(); demo.controls = true; }
+      }
 
       // Highlight the visitor's own system.
       var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;

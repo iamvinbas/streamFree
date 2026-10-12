@@ -12,13 +12,14 @@ with no account, no subscription and no watermark.
 
 [![Latest release](https://img.shields.io/github/v/release/iamvinbas/streamFree?color=6d5efc)](https://github.com/iamvinbas/streamFree/releases/latest)
 [![CI](https://github.com/iamvinbas/streamFree/actions/workflows/ci.yml/badge.svg)](https://github.com/iamvinbas/streamFree/actions/workflows/ci.yml)
+[![Downloads](https://img.shields.io/github/downloads/iamvinbas/streamFree/total?color=6d5efc&label=downloads)](https://github.com/iamvinbas/streamFree/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-6d5efc)](LICENSE)
 
 **[Website](https://iamvinbas.github.io/streamFree/)** · **[Download](#download)** · **English** · [Italiano](README.it.md)
 
 </div>
 
-![The streamFree studio: two people on stage, a lower-third banner, a ticker and the banners panel](docs/assets/studio.jpg)
+![streamFree in action: banners, layouts, ticker, an on-screen comment and the invite window with its QR code](docs/assets/demo.gif)
 
 ## Download
 
@@ -207,6 +208,17 @@ Requires Rust 1.88 or newer. The studio (`web/`) is plain HTML, CSS and JavaScri
 | `docs/` | Architecture, feature map, references |
 
 **Releasing.** Push a tag such as `v0.4.0`. GitHub Actions then builds macOS (arm64, x64), Windows and Linux (x64, arm64), creates the `.dmg` files and the Windows installer, and publishes them with checksums. Tags with a hyphen (`v0.4.0-rc.1`) become pre-releases.
+
+## Contributing
+
+Issues, ideas and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+The most useful help right now is testing:
+
+- on **Windows**;
+- with a **real stream key**;
+- with **guests on phones**.
+
+If streamFree is useful to you, a ⭐ helps other people find it.
 
 ## License
 

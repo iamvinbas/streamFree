@@ -1,0 +1,37 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: streamFree version
+      description: Settings → bottom of the panel, or `streamfree --version`.
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options: [macOS (Apple silicon), macOS (Intel), Windows 10/11, Linux]
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Going live (YouTube, Twitch, …), Recording, Guests, Graphics and layouts, Install or startup, Other]
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The app writes `streamfree.log` in the settings folder (see the README). Remove stream keys before pasting.
+      render: text
