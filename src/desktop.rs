@@ -164,7 +164,7 @@ pub fn run(options: Options) -> Result<()> {
     {
         use tao::platform::windows::WindowExtWindows;
         // SAFETY: the window handle is valid for the lifetime of `window`.
-        unsafe { menu.init_for_hwnd(window.hwnd() as isize)? };
+        unsafe { menu.init_for_hwnd(window.hwnd())? };
     }
 
     let origin = url
