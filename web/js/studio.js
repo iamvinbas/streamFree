@@ -88,7 +88,7 @@ resetEncoderReady();
 
 async function boot() {
   if (!('MediaStreamTrackProcessor' in window) || !('VideoEncoder' in window)) {
-    fatal('streamFree needs Chrome, Edge, Brave or another Chromium browser (version 94 or newer) for the studio. Guests can join from any modern browser.');
+    fatal('streamFree needs Chrome, Edge, Brave or another Chromium browser (version 100 or newer) for the studio. Guests can join from any modern browser.');
     return;
   }
   if (!token) {

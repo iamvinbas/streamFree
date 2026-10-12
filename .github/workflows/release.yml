@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="streamfree-${{ matrix.target }}"
+          mkdir -p dist
+          bin_dir="target/${{ matrix.target }}/release"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp "$bin_dir/streamfree.exe" README.md LICENSE dist/
+            (cd dist && 7z a -tzip "$name.zip" streamfree.exe README.md LICENSE > /dev/null && rm streamfree.exe README.md LICENSE)
+            asset="dist/$name.zip"
+          else
+            cp "$bin_dir/streamfree" README.md LICENSE dist/
+            tar -czf "dist/$name.tar.gz" -C dist streamfree README.md LICENSE
+            rm dist/streamfree dist/README.md dist/LICENSE
+            asset="dist/$name.tar.gz"
+          fi
+          file=$(basename "$asset")
+          if command -v sha256sum > /dev/null; then
+            (cd dist && sha256sum "$file" > "$file.sha256")
+          else
+            (cd dist && shasum -a 256 "$file" > "$file.sha256")
+          fi
+          cat "dist/$file.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "streamFree ${GITHUB_REF_NAME}" \
+            --notes-file .github/release-notes.md

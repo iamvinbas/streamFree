@@ -1,6 +1,9 @@
-//! Read-only Twitch chat over IRC (anonymous `justinfan` login, no account or
-//! API key needed). Messages are forwarded to the studio so the host can put
-//! them on screen.
+//! Read-only Twitch chat over IRC. Messages are forwarded to the studio so the
+//! host can put them on screen.
+//!
+//! Twitch documents IRC with a user access token; this uses the anonymous
+//! `justinfan<number>` login instead, a long-standing but undocumented
+//! convention that needs no account or API key.
 
 use anyhow::{Context, Result};
 use serde::Serialize;
