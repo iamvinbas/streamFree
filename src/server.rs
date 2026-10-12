@@ -50,6 +50,9 @@ pub struct AppState {
     guests: Mutex<HashMap<String, Guest>>,
     events: broadcast::Sender<Value>,
     live: Mutex<bool>,
+    /// Open studio pages, and when the count last changed (app mode quits
+    /// when the studio window has been closed for a few seconds).
+    studio_pages: std::sync::Mutex<(usize, Instant)>,
     chat: Mutex<Option<(String, watch::Sender<bool>)>>,
 }
 
@@ -68,6 +71,7 @@ impl AppState {
             guests: Mutex::new(HashMap::new()),
             events,
             live: Mutex::new(false),
+            studio_pages: std::sync::Mutex::new((0, Instant::now())),
             chat: Mutex::new(None),
         })
     }
@@ -88,6 +92,27 @@ impl AppState {
         };
         let invite = self.store.lock().await.settings.invite_token.clone();
         format!("{}/join/{invite}", base.trim_end_matches('/'))
+    }
+
+    /// Whether a broadcast or recording is in progress.
+    pub async fn is_live(&self) -> bool {
+        *self.live.lock().await
+    }
+
+    /// Number of open studio pages and how long that number has held.
+    pub fn studio_pages(&self) -> (usize, Duration) {
+        let (count, since) = *self.studio_pages.lock().unwrap();
+        (count, since.elapsed())
+    }
+
+    fn studio_page_delta(&self, opened: bool) {
+        let mut pages = self.studio_pages.lock().unwrap();
+        pages.0 = if opened {
+            pages.0 + 1
+        } else {
+            pages.0.saturating_sub(1)
+        };
+        pages.1 = Instant::now();
     }
 
     async fn to_host(&self, value: Value) {
@@ -535,7 +560,13 @@ async fn host_ws(
     ws.on_upgrade(move |socket| host_session(state, socket))
 }
 
-async fn host_session(state: Shared, mut socket: WebSocket) {
+async fn host_session(state: Shared, socket: WebSocket) {
+    state.studio_page_delta(true);
+    host_session_inner(&state, socket).await;
+    state.studio_page_delta(false);
+}
+
+async fn host_session_inner(state: &Shared, mut socket: WebSocket) {
     let (tx, mut rx) = mpsc::channel::<String>(256);
     *state.host_tx.lock().await = Some(tx.clone());
     let mut events = state.events.subscribe();

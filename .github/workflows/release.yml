@@ -39,8 +39,17 @@ jobs:
             asset="dist/$name.zip"
           else
             cp "$bin_dir/streamfree" README.md LICENSE dist/
-            tar -czf "dist/$name.tar.gz" -C dist streamfree README.md LICENSE
-            rm dist/streamfree dist/README.md dist/LICENSE
+            extra=""
+            if [[ "${{ matrix.target }}" == *apple-darwin ]]; then
+              # The desktop app: Finder, Launchpad and Spotlight start this.
+              packaging/macos/make-app.sh "$bin_dir/streamfree" dist "${GITHUB_REF_NAME#v}"
+              extra="streamFree.app"
+            else
+              cp packaging/icons/streamfree-256.png dist/streamfree.png
+              extra="streamfree.png"
+            fi
+            tar -czf "dist/$name.tar.gz" -C dist streamfree README.md LICENSE $extra
+            rm -rf dist/streamfree dist/README.md dist/LICENSE "dist/$extra"
             asset="dist/$name.tar.gz"
           fi
           file=$(basename "$asset")

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>streamFree</string>
+  <key>CFBundleDisplayName</key>
+  <string>streamFree</string>
+  <key>CFBundleIdentifier</key>
+  <string>io.github.iamvinbas.streamfree</string>
+  <key>CFBundleExecutable</key>
+  <string>streamfree</string>
+  <key>CFBundleIconFile</key>
+  <string>streamFree</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__VERSION__</string>
+  <key>CFBundleVersion</key>
+  <string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.video</string>
+  <!-- The window is a browser window; this process only runs the server. -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>MIT License</string>
+</dict>
+</plist>

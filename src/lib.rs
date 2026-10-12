@@ -1,6 +1,7 @@
 //! streamFree core: media containers, RTMP publishing, live sessions and the
 //! studio server. The `streamfree` binary wires these together.
 
+pub mod app;
 pub mod chat;
 pub mod flv;
 pub mod live;

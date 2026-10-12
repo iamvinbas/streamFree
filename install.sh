@@ -3,9 +3,11 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.sh | sh
 #
-# Installs into ~/.local/bin (override with STREAMFREE_INSTALL_DIR). No sudo,
-# no other software is installed. The download is checked against the
-# release's SHA-256 checksum.
+# Installs the streamfree command into ~/.local/bin (override with
+# STREAMFREE_INSTALL_DIR) and the desktop app: streamFree.app in
+# ~/Applications on macOS, a menu entry on Linux. No sudo, no other software
+# is installed. The download is checked against the release's SHA-256
+# checksum.
 set -eu
 
 REPO="iamvinbas/streamFree"
@@ -26,7 +28,9 @@ case "$arch" in
 esac
 target="$arch_part-$os_part"
 asset="streamfree-$target.tar.gz"
-if [ "$VERSION" = "latest" ]; then
+if [ -n "${STREAMFREE_BASE_URL:-}" ]; then
+  base="$STREAMFREE_BASE_URL"
+elif [ "$VERSION" = "latest" ]; then
   base="https://github.com/$REPO/releases/latest/download"
 else
   base="https://github.com/$REPO/releases/download/$VERSION"
@@ -54,8 +58,37 @@ mkdir -p "$DIR"
 mv "$tmp/streamfree" "$DIR/streamfree"
 chmod +x "$DIR/streamfree"
 
-echo "Installed streamFree to $DIR/streamfree"
+echo "Installed the streamfree command to $DIR/streamfree"
+
+if [ -d "$tmp/streamFree.app" ]; then
+  apps="${STREAMFREE_APPS_DIR:-$HOME/Applications}"
+  mkdir -p "$apps"
+  rm -rf "$apps/streamFree.app"
+  mv "$tmp/streamFree.app" "$apps/streamFree.app"
+  echo "Installed the app to $apps/streamFree.app"
+  echo "Open it from Launchpad or Spotlight (search \"streamFree\")."
+elif [ "$os" = "Linux" ]; then
+  share="${XDG_DATA_HOME:-$HOME/.local/share}"
+  if [ -f "$tmp/streamfree.png" ]; then
+    mkdir -p "$share/icons/hicolor/256x256/apps"
+    mv "$tmp/streamfree.png" "$share/icons/hicolor/256x256/apps/streamfree.png"
+  fi
+  mkdir -p "$share/applications"
+  cat > "$share/applications/streamfree.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=streamFree
+Comment=Local live-streaming studio
+Exec="$DIR/streamfree" --app
+Icon=streamfree
+Terminal=false
+Categories=AudioVideo;Video;
+StartupWMClass=streamFree
+DESKTOP
+  echo "Added streamFree to your applications menu."
+fi
+
 case ":$PATH:" in
-  *":$DIR:"*) echo "Run: streamfree" ;;
-  *) echo "Run: $DIR/streamfree   (or add $DIR to your PATH)" ;;
+  *":$DIR:"*) echo "From a terminal, run: streamfree" ;;
+  *) echo "From a terminal, run: $DIR/streamfree   (or add $DIR to your PATH)" ;;
 esac

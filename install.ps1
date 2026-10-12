@@ -2,7 +2,8 @@
 #
 #   irm https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.ps1 | iex
 #
-# Installs into %LOCALAPPDATA%\streamFree and adds it to your user PATH.
+# Installs into %LOCALAPPDATA%\streamFree, adds it to your user PATH and
+# creates streamFree shortcuts in the Start menu and on the desktop.
 # The download is checked against the release's SHA-256 checksum.
 $ErrorActionPreference = 'Stop'
 
@@ -29,8 +30,19 @@ try {
     [Environment]::SetEnvironmentVariable('Path', "$userPath;$dir", 'User')
     Write-Host "Added $dir to your PATH (open a new terminal to use it)."
   }
+  # Shortcuts start the desktop app: the studio in its own window.
+  $shell = New-Object -ComObject WScript.Shell
+  foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+    $link = $shell.CreateShortcut((Join-Path $folder 'streamFree.lnk'))
+    $link.TargetPath = Join-Path $dir 'streamfree.exe'
+    $link.Arguments = '--app'
+    $link.WorkingDirectory = $dir
+    $link.WindowStyle = 7
+    $link.Description = 'streamFree live-streaming studio'
+    $link.Save()
+  }
   Write-Host "Installed streamFree to $dir\streamfree.exe"
-  Write-Host 'Run: streamfree'
+  Write-Host 'Open streamFree from the Start menu or the desktop shortcut.'
 } finally {
   Remove-Item -Recurse -Force $tmp
 }

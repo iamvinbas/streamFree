@@ -44,15 +44,28 @@ curl -fsSL https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.s
 irm https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.ps1 | iex
 ```
 
-Or download the file for your system from [Releases](https://github.com/iamvinbas/streamFree/releases), unpack it and run `streamfree`.
-On macOS, a binary downloaded with a browser is quarantined because it is not notarized. Allow it once with
-`xattr -d com.apple.quarantine ./streamfree`, or install with the script above.
+This installs the **streamFree app** and the `streamfree` command:
+
+| System | Where the app appears |
+|---|---|
+| macOS | `~/Applications`, so Launchpad and Spotlight find it |
+| Windows | Start menu and desktop shortcuts |
+| Linux | Applications menu |
+
+Or download the file for your system from [Releases](https://github.com/iamvinbas/streamFree/releases) and unpack it.
+On macOS, drag `streamFree.app` into Applications. The app is not notarized, so the first time:
+
+- right-click it and choose **Open**;
+- if macOS still blocks it, go to **System Settings → Privacy & Security** and choose **Open Anyway**.
+
+The install script above avoids this step.
 
 ## Quick start
 
-1. Run `streamfree`. The studio opens in your browser.
-   - The host needs **Chrome, Edge, Brave or another Chromium browser** (version 100 or newer).
+1. Open the **streamFree** app. The studio opens in its own window; closing that window quits streamFree.
+   - The app shows the studio through **Chrome, Edge or Brave**, so one of them must be installed (version 100 or newer).
    - Guests can use any modern browser.
+   - From a terminal, `streamfree` opens the studio as a tab in your default browser instead.
 2. Allow camera and microphone.
 3. Optional: open **Destinations** and add YouTube, Twitch or another RTMP server with its stream key.
 4. Press **Record** to record only, or **Go live** to stream (and record) everywhere at once.
@@ -75,9 +88,11 @@ Browsers only allow cameras on secure (HTTPS) pages, except on `localhost`. Pick
 ## Command-line options
 
 ```text
-streamfree [--port 8787] [--lan] [--tunnel] [--public-url URL]
+streamfree [--app] [--port 8787] [--lan] [--tunnel] [--public-url URL]
            [--data-dir DIR] [--recordings-dir DIR] [--no-open]
 ```
+
+`--app` opens the studio in its own window and quits when it is closed (what the app icon does). For example, `streamfree --app --lan` starts the app with guests on your network.
 
 Settings, destinations and uploaded images live in the data directory:
 

@@ -45,15 +45,28 @@ curl -fsSL https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.s
 irm https://raw.githubusercontent.com/iamvinbas/streamFree/main/install.ps1 | iex
 ```
 
-Oppure scarica il file per il tuo sistema da [Releases](https://github.com/iamvinbas/streamFree/releases), estrailo ed esegui `streamfree`.
-Su macOS un binario scaricato dal browser viene messo in quarantena perché non è notarizzato. Sbloccalo una volta con
-`xattr -d com.apple.quarantine ./streamfree`, oppure usa lo script qui sopra.
+Così installi l'**app streamFree** e il comando `streamfree`:
+
+| Sistema | Dove compare l'app |
+|---|---|
+| macOS | `~/Applications` (Applicazioni nel Finder), quindi la trovi da Launchpad e Spotlight |
+| Windows | Collegamenti nel menu Start e sul desktop |
+| Linux | Menu delle applicazioni |
+
+Oppure scarica il file per il tuo sistema da [Releases](https://github.com/iamvinbas/streamFree/releases) ed estrailo.
+Su macOS trascina `streamFree.app` in Applicazioni. L'app non è notarizzata, quindi la prima volta:
+
+- clic destro sull'app e scegli **Apri**;
+- se macOS la blocca ancora, vai in **Impostazioni di Sistema → Privacy e sicurezza** e scegli **Apri comunque**.
+
+Lo script qui sopra evita questo passaggio.
 
 ## Primi passi
 
-1. Esegui `streamfree`: lo studio si apre nel browser.
-   - Chi conduce deve usare **Chrome, Edge, Brave o un altro browser Chromium** (versione 100 o successiva).
+1. Apri l'app **streamFree**: lo studio si apre in una sua finestra, e chiudendola streamFree si spegne.
+   - L'app mostra lo studio tramite **Chrome, Edge o Brave**, quindi uno dei tre deve essere installato (versione 100 o successiva).
    - Gli ospiti possono usare qualsiasi browser moderno.
+   - Da terminale, `streamfree` apre invece lo studio come scheda del browser predefinito.
 2. Consenti videocamera e microfono.
 3. Facoltativo: apri **Destinations** e aggiungi YouTube, Twitch o un altro server RTMP con la sua chiave di stream.
 4. Premi **Record** per registrare soltanto, oppure **Go live** per trasmettere (e registrare) ovunque insieme.
@@ -76,9 +89,11 @@ I browser consentono la videocamera solo su pagine sicure (HTTPS), tranne che su
 ## Opzioni da riga di comando
 
 ```text
-streamfree [--port 8787] [--lan] [--tunnel] [--public-url URL]
+streamfree [--app] [--port 8787] [--lan] [--tunnel] [--public-url URL]
            [--data-dir DIR] [--recordings-dir DIR] [--no-open]
 ```
+
+`--app` apre lo studio in una sua finestra e chiude tutto quando la finestra viene chiusa (è ciò che fa l'icona dell'app). Per esempio, `streamfree --app --lan` avvia l'app con ospiti dalla tua rete.
 
 Impostazioni, destinazioni e immagini caricate stanno nella cartella dati:
 

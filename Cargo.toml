@@ -1,6 +1,6 @@
 [package]
 name = "streamfree"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Free, local, open-source live streaming studio: browser studio, guests, multistreaming and recording in one binary."
@@ -37,6 +37,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 webbrowser = "1"
 webpki-roots = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+
+[build-dependencies]
+winresource = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
