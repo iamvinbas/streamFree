@@ -320,9 +320,13 @@ function drawProgram(now) {
 
 function tick() {
   const now = performance.now();
+  // The instant this frame stands for on the fixed cadence. Timers fire with
+  // jitter (tens of ms on a busy machine); stamping frames with the slot
+  // instead of the firing time keeps the video timeline regular.
+  const slot = nextTick;
   drawProgram(now);
   if (previewCtx) previewCtx.drawImage(canvas, 0, 0, preview.width, preview.height);
-  if (enc?.encoding) encodeVideo(now);
+  if (enc?.encoding) encodeVideo(slot);
   frameNo++;
   if (returnFeed && frameNo % Math.max(1, Math.round(fps / 15)) === 0) {
     returnCtx.drawImage(canvas, 0, 0, returnCanvas.width, returnCanvas.height);
@@ -409,7 +413,7 @@ function sendChunk(kind, chunk, ptsUs) {
   enc.sentBytes += buf.byteLength;
 }
 
-function encodeVideo(now) {
+function encodeVideo(slotTime) {
   const e = enc;
   const ws = e.ws;
   // Back-pressure: if the server is not keeping up, skip frames and restart
@@ -419,7 +423,9 @@ function encodeVideo(now) {
     e.forceKey = true;
     return;
   }
-  const ts = Math.round((now - e.t0) * 1000);
+  const ts = Math.max(0, Math.round((slotTime - e.t0) * 1000));
+  if (ts <= e.lastTs) return;
+  e.lastTs = ts;
   const frame = new VideoFrame(canvas, { timestamp: ts, duration: Math.round(1e6 / fps) });
   const key = e.forceKey || e.encodedFrames % (fps * 2) === 0;
   e.forceKey = false;
@@ -452,6 +458,7 @@ async function start(opts) {
     encoding: false,
     t0: 0,
     encodedFrames: 0,
+    lastTs: -1,
     forceKey: true,
     dropped: 0,
     sentBytes: 0,
