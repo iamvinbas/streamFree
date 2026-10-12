@@ -75,12 +75,26 @@ function probe(file) {
 }
 
 function decodeErrors(file) {
-  const r = spawnSync('ffmpeg', ['-v', 'error', '-i', file, '-f', 'null', '-'], { encoding: 'utf8' });
+  // The stream is variable frame rate (one frame per compositor tick), so keep
+  // timestamps as they are instead of converting to a constant frame rate.
+  const r = spawnSync('ffmpeg', ['-v', 'error', '-i', file, '-fps_mode', 'passthrough', '-f', 'null', '-'], { encoding: 'utf8' });
   return r.status === 0 ? r.stderr : `exit ${r.status}: ${r.stderr}`;
+}
+
+// Smallest gap between consecutive video frames, in seconds.
+function minFrameGap(file) {
+  const out = execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', file]).toString();
+  const pts = out.split('\n').filter((l) => l.trim() !== '').map((l) => Number(l.split(',')[0])).filter(Number.isFinite).sort((a, b) => a - b);
+  let gap = Infinity;
+  for (let i = 1; i < pts.length; i++) gap = Math.min(gap, pts[i] - pts[i - 1]);
+  return gap;
 }
 
 function checkMedia(file, label) {
   const info = probe(file);
+  // Frames come from a ~33 ms clock; bunched frames mean the scheduler burst.
+  const gap = minFrameGap(file);
+  assert.ok(gap > 0.012, `${label}: frames only ${(gap * 1000).toFixed(1)} ms apart`);
   assert.deepEqual(info.codecs, ['h264', 'aac'], `${label}: codecs`);
   assert.ok(Math.abs(info.duration - SECONDS) < 1.5, `${label}: duration ${info.duration}s, expected ~${SECONDS}s`);
   // 30 fps target; allow for start-up and a busy CI machine.

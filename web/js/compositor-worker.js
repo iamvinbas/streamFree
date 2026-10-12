@@ -330,7 +330,11 @@ function tick() {
     self.postMessage({ type: 'return-frame', frame }, [frame]);
   }
   const interval = 1000 / fps;
-  nextTick = Math.max(nextTick + interval, now + 1);
+  // Keep the cadence. When the worker fell behind, skip the missed ticks
+  // instead of firing them back to back: a burst of frames 1 ms apart is a
+  // useless, irregular video timeline.
+  nextTick += interval;
+  if (nextTick <= now) nextTick += Math.ceil((now - nextTick) / interval + 1e-9) * interval;
   if (nextTick - now > interval * 2) nextTick = now + interval;
   tickTimer = setTimeout(tick, nextTick - performance.now());
 }
