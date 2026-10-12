@@ -25,6 +25,12 @@
   <!-- The window is a browser window; this process only runs the server. -->
   <key>LSUIElement</key>
   <true/>
+  <!-- macOS attributes the studio's camera and microphone use to this app and
+       terminates it if these descriptions are missing. -->
+  <key>NSCameraUsageDescription</key>
+  <string>streamFree shows your camera in the studio and in your stream or recording.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>streamFree sends your microphone to your stream, your recording and your guests.</string>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSHumanReadableCopyright</key>
