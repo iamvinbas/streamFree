@@ -18,7 +18,7 @@ with no account, no subscription and no watermark.
 
 </div>
 
-![The streamFree studio: two people on stage, a lower-third banner, a ticker and the banners panel](docs/assets/studio.png)
+![The streamFree studio: two people on stage, a lower-third banner, a ticker and the banners panel](docs/assets/studio.jpg)
 
 ## Download
 

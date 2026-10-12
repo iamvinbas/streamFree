@@ -18,7 +18,7 @@ Un'app desktop sotto i 5 MB, senza account, abbonamento né watermark.
 
 </div>
 
-![Lo studio di streamFree: due persone in scena, un banner, un ticker e il pannello dei banner](docs/assets/studio.png)
+![Lo studio di streamFree: due persone in scena, un banner, un ticker e il pannello dei banner](docs/assets/studio.jpg)
 
 ## Download
 
