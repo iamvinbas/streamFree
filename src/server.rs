@@ -6,6 +6,12 @@
 //! * the host holds `host_token` (in the URL the app opens) and may do anything;
 //! * guests hold `invite_token` (in the invite link) and may only join the
 //!   signaling room. Stream keys never leave this process.
+//!
+//! Guests normally exchange media with the host directly over WebRTC. When no
+//! direct path exists (strict NATs, firewalls, mobile networks), the host
+//! switches that guest to the relay: encoded media then travels over two
+//! WebSockets through this server (`/ws/relay/guest`, `/ws/relay/host`), which
+//! works wherever the guest page itself loads.
 
 use crate::chat;
 use crate::live::{DestinationSpec, Session, SessionOptions};
@@ -34,10 +40,32 @@ struct Web;
 
 const MAX_GUESTS: usize = 16;
 const MAX_ASSET_BYTES: usize = 512 * 1024 * 1024;
+/// Proxies (Cloudflare among them) close WebSockets that stay silent for
+/// about 100 s; a ping keeps backstage guests connected.
+const KEEPALIVE: Duration = Duration::from_secs(20);
+/// Queued to a guest's signaling channel when the host removes them, so the
+/// guest page can tell a removal from a dropped connection.
+const KICKED: &str = "\u{0}kicked";
+/// WebSocket close code sent to a removed guest.
+const CLOSE_REMOVED: u16 = 4001;
+/// Largest relay message (one encoded frame plus its header).
+const MAX_RELAY_MESSAGE: usize = 2 * 1024 * 1024;
 
 struct Guest {
     name: String,
+    /// Chosen by the guest page and kept across its reconnections, so the
+    /// host can put a guest who dropped for a moment back where they were.
+    cid: String,
+    /// Lets this guest, and only this guest, open its relay socket.
+    relay_key: String,
     tx: mpsc::Sender<String>,
+}
+
+/// Where relayed media goes: the host page's relay socket and each guest's.
+#[derive(Default)]
+struct RelayRoutes {
+    host: Option<mpsc::Sender<Message>>,
+    guests: HashMap<String, mpsc::Sender<Message>>,
 }
 
 pub struct AppState {
@@ -54,6 +82,7 @@ pub struct AppState {
     router: std::sync::OnceLock<Router>,
     host_tx: Mutex<Option<mpsc::Sender<String>>>,
     guests: Mutex<HashMap<String, Guest>>,
+    relay: Mutex<RelayRoutes>,
     events: broadcast::Sender<Value>,
     live: Mutex<bool>,
     /// Open studio pages, and when the count last changed (app mode quits
@@ -78,6 +107,7 @@ impl AppState {
             router: std::sync::OnceLock::new(),
             host_tx: Mutex::new(None),
             guests: Mutex::new(HashMap::new()),
+            relay: Mutex::new(RelayRoutes::default()),
             events,
             live: Mutex::new(false),
             studio_pages: std::sync::Mutex::new((0, Instant::now())),
@@ -176,6 +206,8 @@ pub fn router(state: Shared) -> Router {
         .route("/api/recordings/open", post(open_recordings))
         .route("/ws/host", get(host_ws))
         .route("/ws/guest", get(guest_ws))
+        .route("/ws/relay/host", get(relay_host_ws))
+        .route("/ws/relay/guest", get(relay_guest_ws))
         .route("/ws/ingest", get(ingest_ws))
         .layer(axum::middleware::map_response(security_headers))
         .with_state(state)
@@ -683,6 +715,16 @@ async fn host_session(state: Shared, socket: WebSocket) {
     state.studio_page_delta(false);
 }
 
+fn keepalive() -> tokio::time::Interval {
+    let mut t = tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
+    t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    t
+}
+
+fn guest_summary(id: &str, g: &Guest) -> Value {
+    json!({"id": id, "name": g.name, "cid": g.cid})
+}
+
 async fn host_session_inner(state: &Shared, mut socket: WebSocket) {
     let (tx, mut rx) = mpsc::channel::<String>(256);
     *state.host_tx.lock().await = Some(tx.clone());
@@ -692,7 +734,7 @@ async fn host_session_inner(state: &Shared, mut socket: WebSocket) {
         .lock()
         .await
         .iter()
-        .map(|(id, g)| json!({"id": id, "name": g.name}))
+        .map(|(id, g)| guest_summary(id, g))
         .collect();
     let hello = json!({"type": "hello", "guests": snapshot});
     if socket
@@ -702,6 +744,7 @@ async fn host_session_inner(state: &Shared, mut socket: WebSocket) {
     {
         return;
     }
+    let mut ping = keepalive();
     loop {
         tokio::select! {
             incoming = socket.recv() => {
@@ -710,8 +753,7 @@ async fn host_session_inner(state: &Shared, mut socket: WebSocket) {
                 let Ok(mut value) = serde_json::from_str::<Value>(&text) else { continue };
                 let Some(to) = value.get("to").and_then(Value::as_str).map(str::to_owned) else { continue };
                 if value.get("type").and_then(Value::as_str) == Some("kick") {
-                    state.guests.lock().await.remove(&to);
-                    state.to_host(json!({"type": "guest-left", "id": to})).await;
+                    remove_guest(state, &to, true).await;
                     continue;
                 }
                 value["from"] = "host".into();
@@ -733,6 +775,9 @@ async fn host_session_inner(state: &Shared, mut socket: WebSocket) {
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
+            _ = ping.tick() => {
+                if socket.send(Message::Ping(Bytes::new())).await.is_err() { break }
+            }
         }
     }
     let mut slot = state.host_tx.lock().await;
@@ -744,11 +789,35 @@ async fn host_session_inner(state: &Shared, mut socket: WebSocket) {
     }
 }
 
+/// Removes a guest: their signaling and relay sockets close and the host is
+/// told. `kicked` tells the guest page it was removed on purpose.
+async fn remove_guest(state: &Shared, id: &str, kicked: bool) {
+    let removed = state.guests.lock().await.remove(id);
+    if let Some(guest) = removed {
+        if kicked {
+            let _ = guest.tx.try_send(KICKED.to_owned());
+        }
+        state.relay.lock().await.guests.remove(id);
+        state.to_host(json!({"type": "guest-left", "id": id})).await;
+    }
+}
+
 #[derive(Deserialize)]
 struct GuestQuery {
     invite: String,
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    cid: String,
+}
+
+/// Keeps `s` only if it is a short run of ASCII letters, digits and dashes.
+fn clean_id(s: &str) -> String {
+    if !s.is_empty() && s.len() <= 40 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        s.to_owned()
+    } else {
+        String::new()
+    }
 }
 
 async fn guest_ws(
@@ -775,29 +844,34 @@ async fn guest_ws(
     } else {
         name
     };
-    ws.on_upgrade(move |socket| guest_session(state, socket, name))
+    let cid = clean_id(&q.cid);
+    ws.on_upgrade(move |socket| guest_session(state, socket, name, cid))
 }
 
-async fn guest_session(state: Shared, mut socket: WebSocket, name: String) {
+async fn guest_session(state: Shared, mut socket: WebSocket, name: String, cid: String) {
     let id = random_token()[..12].to_owned();
+    let relay_key = random_token();
     let (tx, mut rx) = mpsc::channel::<String>(256);
-    state.guests.lock().await.insert(
-        id.clone(),
-        Guest {
-            name: name.clone(),
-            tx,
-        },
-    );
+    let guest = Guest {
+        name: name.clone(),
+        cid: cid.clone(),
+        relay_key: relay_key.clone(),
+        tx,
+    };
+    let summary = guest_summary(&id, &guest);
+    state.guests.lock().await.insert(id.clone(), guest);
     let ice = state.store.lock().await.settings.ice_servers.clone();
-    let welcome = json!({"type": "welcome", "id": id, "iceServers": ice});
+    let welcome = json!({"type": "welcome", "id": id, "iceServers": ice, "relayKey": relay_key});
+    let mut kicked = false;
     if socket
         .send(Message::Text(welcome.to_string().into()))
         .await
         .is_ok()
     {
-        state
-            .to_host(json!({"type": "guest-joined", "id": id, "name": name}))
-            .await;
+        let mut joined = summary;
+        joined["type"] = "guest-joined".into();
+        state.to_host(joined).await;
+        let mut ping = keepalive();
         loop {
             tokio::select! {
                 incoming = socket.recv() => {
@@ -810,15 +884,195 @@ async fn guest_session(state: Shared, mut socket: WebSocket, name: String) {
                     state.to_host(value).await;
                 }
                 outgoing = rx.recv() => {
-                    // The host kicked this guest when the sender is dropped.
+                    // The sender is dropped when the guest is removed.
                     let Some(text) = outgoing else { break };
+                    if text == KICKED {
+                        kicked = true;
+                        break;
+                    }
                     if socket.send(Message::Text(text.into())).await.is_err() { break }
+                }
+                _ = ping.tick() => {
+                    if socket.send(Message::Ping(Bytes::new())).await.is_err() { break }
                 }
             }
         }
     }
-    if state.guests.lock().await.remove(&id).is_some() {
-        state.to_host(json!({"type": "guest-left", "id": id})).await;
+    if kicked {
+        let frame = axum::extract::ws::CloseFrame {
+            code: CLOSE_REMOVED,
+            reason: "removed by the host".into(),
+        };
+        let _ = socket.send(Message::Close(Some(frame))).await;
+    }
+    remove_guest(&state, &id, false).await;
+}
+
+// ---------------------------------------------------------------- media relay
+
+#[derive(Deserialize)]
+struct RelayGuestQuery {
+    invite: String,
+    id: String,
+    key: String,
+}
+
+async fn relay_host_ws(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<TokenQuery>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    require_host!(state, headers, q);
+    ws.max_message_size(MAX_RELAY_MESSAGE)
+        .on_upgrade(move |socket| relay_host_session(state, socket))
+}
+
+/// The host page's relay socket. Binary messages are `[id length][guest
+/// id][payload]` in both directions; text messages are JSON with `to`
+/// (from the host) or `from` (to the host).
+async fn relay_host_session(state: Shared, mut socket: WebSocket) {
+    let (tx, mut rx) = mpsc::channel::<Message>(512);
+    state.relay.lock().await.host = Some(tx.clone());
+    let mut ping = keepalive();
+    loop {
+        tokio::select! {
+            incoming = socket.recv() => {
+                let Some(Ok(msg)) = incoming else { break };
+                match msg {
+                    Message::Binary(data) => {
+                        let Some((id, payload)) = split_relay(&data) else { continue };
+                        let relay = state.relay.lock().await;
+                        if let Some(guest) = relay.guests.get(id) {
+                            // A full queue means the guest's link is slower than the
+                            // stream: drop the frame, the receiver asks for a keyframe.
+                            let _ = guest.try_send(Message::Binary(Bytes::copy_from_slice(payload)));
+                        }
+                    }
+                    Message::Text(text) => {
+                        let Ok(mut value) = serde_json::from_str::<Value>(&text) else { continue };
+                        let Some(to) = value.get("to").and_then(Value::as_str).map(str::to_owned) else { continue };
+                        if let Some(obj) = value.as_object_mut() { obj.remove("to"); }
+                        let relay = state.relay.lock().await;
+                        if let Some(guest) = relay.guests.get(&to) {
+                            let _ = guest.try_send(Message::Text(value.to_string().into()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            outgoing = rx.recv() => {
+                let Some(msg) = outgoing else { break };
+                if socket.send(msg).await.is_err() { break }
+            }
+            _ = ping.tick() => {
+                if socket.send(Message::Ping(Bytes::new())).await.is_err() { break }
+            }
+        }
+    }
+    let mut relay = state.relay.lock().await;
+    if relay.host.as_ref().is_some_and(|h| h.same_channel(&tx)) {
+        relay.host = None;
+    }
+}
+
+/// `[id length][id][payload]` -> (id, payload).
+fn split_relay(data: &[u8]) -> Option<(&str, &[u8])> {
+    let len = *data.first()? as usize;
+    let id = std::str::from_utf8(data.get(1..1 + len)?).ok()?;
+    Some((id, data.get(1 + len..)?))
+}
+
+fn join_relay(id: &str, payload: &[u8]) -> Bytes {
+    let mut out = Vec::with_capacity(1 + id.len() + payload.len());
+    out.push(id.len() as u8);
+    out.extend_from_slice(id.as_bytes());
+    out.extend_from_slice(payload);
+    out.into()
+}
+
+async fn relay_guest_ws(
+    State(state): State<Shared>,
+    Query(q): Query<RelayGuestQuery>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let expected = state.store.lock().await.settings.invite_token.clone();
+    if !constant_eq(&q.invite, &expected) {
+        return (StatusCode::FORBIDDEN, "invalid invite").into_response();
+    }
+    let allowed = state
+        .guests
+        .lock()
+        .await
+        .get(&q.id)
+        .is_some_and(|g| constant_eq(&q.key, &g.relay_key));
+    if !allowed {
+        return (StatusCode::FORBIDDEN, "unknown guest").into_response();
+    }
+    ws.max_message_size(MAX_RELAY_MESSAGE)
+        .on_upgrade(move |socket| relay_guest_session(state, socket, q.id))
+}
+
+async fn relay_guest_session(state: Shared, mut socket: WebSocket, id: String) {
+    let (tx, mut rx) = mpsc::channel::<Message>(128);
+    state
+        .relay
+        .lock()
+        .await
+        .guests
+        .insert(id.clone(), tx.clone());
+    to_relay_host(
+        &state,
+        Message::Text(json!({"type": "relay-open", "from": id}).to_string().into()),
+    )
+    .await;
+    let mut ping = keepalive();
+    loop {
+        tokio::select! {
+            incoming = socket.recv() => {
+                let Some(Ok(msg)) = incoming else { break };
+                match msg {
+                    Message::Binary(data) => {
+                        to_relay_host(&state, Message::Binary(join_relay(&id, &data))).await;
+                    }
+                    Message::Text(text) => {
+                        if text.len() > 64 * 1024 { continue }
+                        let Ok(mut value) = serde_json::from_str::<Value>(&text) else { continue };
+                        value["from"] = id.clone().into();
+                        to_relay_host(&state, Message::Text(value.to_string().into())).await;
+                    }
+                    _ => {}
+                }
+            }
+            outgoing = rx.recv() => {
+                // The route is removed (and this sender dropped) when the guest leaves.
+                let Some(msg) = outgoing else { break };
+                if socket.send(msg).await.is_err() { break }
+            }
+            _ = ping.tick() => {
+                if socket.send(Message::Ping(Bytes::new())).await.is_err() { break }
+            }
+        }
+    }
+    let mut relay = state.relay.lock().await;
+    if relay.guests.get(&id).is_some_and(|g| g.same_channel(&tx)) {
+        relay.guests.remove(&id);
+    }
+    drop(relay);
+    to_relay_host(
+        &state,
+        Message::Text(
+            json!({"type": "relay-closed", "from": id})
+                .to_string()
+                .into(),
+        ),
+    )
+    .await;
+}
+
+async fn to_relay_host(state: &Shared, msg: Message) {
+    if let Some(host) = state.relay.lock().await.host.as_ref() {
+        let _ = host.try_send(msg);
     }
 }
 
@@ -1089,6 +1343,21 @@ mod tests {
             "My-Show-2026-10-12-21-30"
         );
         assert!(safe_file_stem("../..").starts_with("streamfree-"));
+    }
+
+    #[test]
+    fn relay_framing_round_trips() {
+        let framed = join_relay("abc123", &[1, 2, 3]);
+        assert_eq!(split_relay(&framed), Some(("abc123", &[1u8, 2, 3][..])));
+        assert_eq!(split_relay(&[]), None);
+        assert_eq!(split_relay(&[9, b'a']), None);
+    }
+
+    #[test]
+    fn client_ids_are_sanitized() {
+        assert_eq!(clean_id("a1-B2"), "a1-B2");
+        assert_eq!(clean_id("../x"), "");
+        assert_eq!(clean_id(&"a".repeat(41)), "");
     }
 
     #[test]

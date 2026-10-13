@@ -7,6 +7,10 @@
 
 import { LAYOUTS, computeLayout } from './layouts.js';
 import { Mixer } from './audio.js';
+import {
+  VIDEO, AUDIO, relayCaps, pickVideoCodec, parsePacket, loadRelayWorklets,
+  VideoSender, VideoReceiver, AudioSender, AudioReceiver,
+} from './relay.js';
 import { t, setLang, getLang, detectLang } from './i18n.js';
 import { PLATFORMS, platformGuide, helpTopics, cloudflaredInstall } from './help.js';
 import {
@@ -72,6 +76,7 @@ const DEFAULT_STUDIO = {
     autoGainControl: true,
     camId: '',
     micId: '',
+    guestTransport: 'auto', // 'auto': direct WebRTC, relay if that fails; 'relay': always relay
     mirror: false,
     monitor: true,
     recordWhileLive: true,
@@ -98,6 +103,11 @@ let worker = null;
 let mixer = null;
 let returnTrack = null;
 let returnWriter = null;
+// Media relay for guests without a direct path (see relay.js).
+let relaySocket = null;
+let returnRelay = null; // one encoder for the program sent to every relayed guest
+let myRelayCaps = null;
+const stageMemory = new Map(); // guest cid -> when they dropped while on stage
 let mediaElement = null;
 let encoderReady = null; // resolves when the worker has warmed up its encoders
 let markEncoderReady = () => {};
@@ -369,6 +379,7 @@ function onWorkerMessage(e) {
   const m = e.data;
   switch (m.type) {
     case 'return-frame':
+      if (returnRelay && relayedGuests().length) returnRelay.pushFrame(m.frame.clone());
       if (returnWriter && (returnWriter.desiredSize ?? 1) > 0) returnWriter.write(m.frame).catch(() => {});
       else m.frame.close();
       break;
@@ -526,16 +537,31 @@ function send(msg) {
 function onSignal(m) {
   switch (m.type) {
     case 'hello':
-      for (const g of m.guests) if (!people.has(g.id)) addGuest(g.id, g.name);
+      for (const g of m.guests) if (!people.has(g.id)) addGuest(g.id, g.name, g.cid);
       break;
-    case 'guest-joined':
-      addGuest(m.id, m.name);
-      toast(t('{name} joined backstage', { name: m.name }));
+    case 'guest-joined': {
+      addGuest(m.id, m.name, m.cid);
+      // A guest whose connection dropped for a moment goes back on stage.
+      const droppedAt = m.cid ? stageMemory.get(m.cid) : 0;
+      if (droppedAt && Date.now() - droppedAt < 120_000) {
+        stageMemory.delete(m.cid);
+        toggleStage(m.id);
+        toast(t('{name} is back', { name: m.name }));
+      } else {
+        toast(t('{name} joined backstage', { name: m.name }));
+      }
       // Automated checks bring every guest on stage.
       if (smoke) setTimeout(() => !stageIds.includes(m.id) && toggleStage(m.id), 500);
       break;
-    case 'guest-left':
+    }
+    case 'guest-left': {
+      const g = people.get(m.id);
+      if (g?.cid && stageIds.includes(m.id)) stageMemory.set(g.cid, Date.now());
       removeGuest(m.id);
+      break;
+    }
+    case 'relay-ready':
+      relayGuestReady(m.from, m.caps);
       break;
     case 'answer': {
       const g = people.get(m.from);
@@ -580,23 +606,41 @@ function onSignal(m) {
       if (tab === 'comments') renderPanel();
       break;
     case 'sharing':
+      if (sharing?.tunnel?.url && m.tunnel?.url && sharing.tunnel.url !== m.tunnel.url) {
+        toast(t('The internet link changed. Send your guests the new one.'), 'error');
+      }
       sharing = m;
       if (openDialogKind === 'invite' && $('#dialog').open) inviteDialog({ refresh: false });
       break;
   }
 }
 
-async function addGuest(id, name) {
+async function addGuest(id, name, cid = '') {
   if (people.has(id)) return;
-  const guest = { id, kind: 'guest', name, stream: new MediaStream(), micOn: true, camOn: true, muted: false, pc: null, connection: 'connecting' };
+  const guest = {
+    id, kind: 'guest', name, cid, stream: new MediaStream(), micOn: true, camOn: true, muted: false, pc: null,
+    connection: 'connecting', transport: 'webrtc', relay: null, timers: [],
+  };
   people.set(id, guest);
+  worker.postMessage({ type: 'return-feed', enabled: true });
+  if (S.settings.guestTransport === 'relay') {
+    startRelay(id);
+    renderPeople();
+    return;
+  }
   const pc = new RTCPeerConnection({ iceServers: info.iceServers || [] });
   guest.pc = pc;
   pc.addTransceiver(returnTrack, { direction: 'sendrecv' });
   pc.addTransceiver(mixer.guestTrack(id), { direction: 'sendrecv' });
   pc.onicecandidate = (e) => e.candidate && send({ to: id, type: 'candidate', candidate: e.candidate });
   pc.onconnectionstatechange = () => {
+    if (guest.pc !== pc) return;
     guest.connection = pc.connectionState;
+    if (pc.connectionState === 'failed') startRelay(id);
+    // A connection that drops and does not recover switches to the relay too.
+    if (pc.connectionState === 'disconnected') {
+      guest.timers.push(setTimeout(() => guest.pc === pc && pc.connectionState !== 'connected' && startRelay(id), 6000));
+    }
     renderPeople();
   };
   pc.ontrack = (e) => {
@@ -605,11 +649,189 @@ async function addGuest(id, name) {
     else mixer.add(id, 'guest', new MediaStream([e.track]));
     renderPeople();
   };
-  worker.postMessage({ type: 'return-feed', enabled: true });
+  // Browsers take long to declare a connection failed; when there is no
+  // direct path, switch to the relay well before that.
+  guest.timers.push(setTimeout(() => guest.pc === pc && pc.connectionState !== 'connected' && startRelay(id), 10_000));
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   send({ to: id, type: 'offer', sdp: offer.sdp });
   renderPeople();
+}
+
+// ---------------------------------------------------------------- relay
+
+function relayedGuests() {
+  return [...people.values()].filter((p) => p.kind === 'guest' && p.relay?.ready);
+}
+
+function hostRelayCaps() {
+  myRelayCaps ||= relayCaps();
+  return myRelayCaps;
+}
+
+function openRelaySocket() {
+  if (relaySocket && relaySocket.readyState <= WebSocket.OPEN) return relaySocket;
+  const ws = new WebSocket(api.wsUrl('/ws/relay/host'));
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (e) => (typeof e.data === 'string' ? onRelayText(JSON.parse(e.data)) : onRelayBinary(e.data));
+  ws.onclose = () => {
+    if (relaySocket !== ws) return;
+    relaySocket = null;
+    if ([...people.values()].some((p) => p.transport === 'relay')) setTimeout(openRelaySocket, 1000);
+  };
+  relaySocket = ws;
+  return ws;
+}
+
+/** Sends `buf` to a relayed guest: `[id length][id][packet]`. */
+function relayBinary(id, buf) {
+  if (relaySocket?.readyState !== WebSocket.OPEN) return;
+  const idBytes = new TextEncoder().encode(id);
+  const out = new Uint8Array(1 + idBytes.length + buf.byteLength);
+  out[0] = idBytes.length;
+  out.set(idBytes, 1);
+  out.set(new Uint8Array(buf), 1 + idBytes.length);
+  relaySocket.send(out);
+}
+
+function relayText(id, msg) {
+  if (relaySocket?.readyState === WebSocket.OPEN) relaySocket.send(JSON.stringify({ ...msg, to: id }));
+}
+
+function onRelayText(m) {
+  // A relayed guest lost return-feed packets and needs a keyframe.
+  if (m.type === 'key') returnRelay?.requestKey();
+}
+
+function onRelayBinary(data) {
+  const bytes = new Uint8Array(data);
+  const len = bytes[0];
+  const id = new TextDecoder().decode(bytes.subarray(1, 1 + len));
+  const g = people.get(id);
+  if (!g?.relay?.ready) return;
+  let p;
+  try {
+    p = parsePacket(data.slice(1 + len));
+  } catch {
+    return;
+  }
+  if (p.kind === VIDEO) g.relay.video.push(p);
+  else if (p.kind === AUDIO) g.relay.audio.push(p);
+}
+
+/** Moves a guest from WebRTC to the relay. */
+async function startRelay(id) {
+  const g = people.get(id);
+  if (!g || g.transport === 'relay') return;
+  g.timers.forEach(clearTimeout);
+  g.timers = [];
+  g.transport = 'relay';
+  g.connection = 'relay-connecting';
+  if (g.pc) {
+    g.pc.onconnectionstatechange = null;
+    g.pc.close();
+    g.pc = null;
+    toast(t('{name} could not connect directly; using the relay.', { name: g.name }));
+  }
+  for (const tr of g.stream.getTracks()) g.stream.removeTrack(tr);
+  attachVideo(id, null);
+  mixer.remove(id);
+  openRelaySocket();
+  const caps = await hostRelayCaps();
+  send({ to: id, type: 'relay-start', caps: caps.decode });
+  renderPeople();
+}
+
+/** The guest opened its relay socket and told us what it can decode. */
+async function relayGuestReady(id, peer) {
+  const g = people.get(id);
+  if (!g || g.transport !== 'relay' || g.relay) return;
+  await loadRelayWorklets(mixer.ctx);
+  const mine = await hostRelayCaps();
+  if (people.get(id) !== g) return;
+  const r = { ready: false, peer: peer || { video: [], opus: false }, track: null, writer: null, canvas: null };
+  g.relay = r;
+  r.video = new VideoReceiver({ onFrame: (frame) => relayFrame(g, frame), requestKey: () => relayText(id, { type: 'key' }) });
+  r.audio = new AudioReceiver({ ctx: mixer.ctx });
+  mixer.add(id, 'guest', r.audio.node);
+  r.send = new AudioSender({
+    ctx: mixer.ctx, source: mixer.guestBusNode(id), send: (buf) => relayBinary(id, buf),
+    opus: mine.encode.opus && r.peer.opus,
+  });
+  r.ready = true;
+  updateReturnRelay();
+  renderPeople();
+}
+
+/** Keeps one return-feed encoder in a codec every relayed guest can decode. */
+async function updateReturnRelay() {
+  const guests = relayedGuests();
+  if (!guests.length) {
+    returnRelay?.stop();
+    returnRelay = null;
+    return;
+  }
+  const mine = await hostRelayCaps();
+  const common = mine.encode.video.find((c) => guests.every((g) => g.relay.peer.video.includes(c)))
+    || pickVideoCodec(mine, guests[0].relay.peer.video);
+  if (!returnRelay) {
+    returnRelay = new VideoSender({
+      codec: common, maxSide: 640, fps: 15, bitrate: 700_000,
+      send: (buf) => { for (const g of relayedGuests()) relayBinary(g.id, buf); },
+      canSend: () => (relaySocket?.bufferedAmount ?? 0) < 4_000_000,
+    });
+  } else {
+    returnRelay.setCodec(common);
+  }
+  returnRelay.requestKey();
+}
+
+/** A decoded frame from a relayed guest becomes their video track. */
+function relayFrame(g, frame) {
+  const r = g.relay;
+  if (!r || people.get(g.id) !== g) {
+    frame.close();
+    return;
+  }
+  if (!r.track) {
+    if ('MediaStreamTrackGenerator' in window) {
+      r.track = new MediaStreamTrackGenerator({ kind: 'video' });
+      r.writer = r.track.writable.getWriter();
+    } else {
+      // WebKit has no track generator in the page: paint into a canvas.
+      r.canvas = h('canvas', { width: frame.displayWidth, height: frame.displayHeight });
+      r.ctx2d = r.canvas.getContext('2d');
+      r.track = r.canvas.captureStream(30).getVideoTracks()[0];
+    }
+    g.stream.addTrack(r.track);
+    attachVideo(g.id, r.track);
+    g.connection = 'relay';
+    // Tell the guest we can see them: their status turns from "Connecting".
+    send({ to: g.id, type: 'relay-ok' });
+    renderPeople();
+  }
+  if (r.writer) {
+    if ((r.writer.desiredSize ?? 1) > 0) r.writer.write(frame).catch(() => {});
+    else frame.close();
+    return;
+  }
+  if (r.canvas.width !== frame.displayWidth || r.canvas.height !== frame.displayHeight) {
+    r.canvas.width = frame.displayWidth;
+    r.canvas.height = frame.displayHeight;
+  }
+  r.ctx2d.drawImage(frame, 0, 0);
+  frame.close();
+}
+
+function stopRelay(g) {
+  const r = g.relay;
+  if (!r) return;
+  g.relay = null;
+  r.video?.close();
+  r.audio?.close();
+  r.send?.stop();
+  r.track?.stop();
+  updateReturnRelay();
 }
 
 // The return feed is a preview for guests: cap it so it never competes with
@@ -631,7 +853,9 @@ async function limitReturnFeed(pc) {
 function removeGuest(id) {
   const g = people.get(id);
   if (!g) return;
+  g.timers?.forEach(clearTimeout);
   g.pc?.close();
+  stopRelay(g);
   attachVideo(id, null);
   mixer.remove(id);
   mixer.removeGuestBus(id);
@@ -1089,6 +1313,8 @@ function connectionLabel(state) {
     disconnected: t('reconnecting'),
     failed: t('connection failed'),
     closed: t('disconnected'),
+    'relay-connecting': t('connecting via relay'),
+    relay: t('via relay'),
   }[state] || state;
 }
 
@@ -1566,6 +1792,11 @@ function settingsPanel() {
       check(st.monitor, t('Hear guests and clips on this computer (use headphones)'), (v) => { st.monitor = v; mixer.setMonitor(v); saveStudio(); })),
     section(t('Guests'),
       h('button', { class: 'btn', onclick: () => inviteDialog() }, t('Invite guests')),
+      field(t('Connection'), select(st.guestTransport, [
+        ['auto', t('Automatic: direct, through streamFree if that fails')],
+        ['relay', t('Always through streamFree')],
+      ], (v) => { st.guestTransport = v; saveStudio(); }),
+      t('Guests who cannot connect directly (strict or mobile networks) are switched automatically. Applies to guests who join from now on.')),
       field(t('ICE servers (STUN/TURN)'), iceText, t('Add a TURN server if guests behind strict firewalls cannot connect. JSON list of {urls, username, credential}.')),
       h('button', {
         class: 'btn small', onclick: async () => {
@@ -1637,6 +1868,19 @@ window.streamFree = {
     for (const p of people.values()) if (p.kind === 'guest') send({ to: p.id, type: 'chat', text, author: S.hostName || 'Host' });
   },
   kick: (id) => send({ to: id, type: 'kick' }),
+  setGuestTransport: (v) => { S.settings.guestTransport = v; },
+  relayStats: () => Object.fromEntries([...people.values()].filter((p) => p.kind === 'guest').map((p) => {
+    const tr = p.stream.getVideoTracks()[0];
+    return [p.id, {
+      name: p.name,
+      transport: p.transport,
+      connection: p.connection,
+      videoFrames: p.relay?.video.frames || 0,
+      audioPackets: p.relay?.audio.packets || 0,
+      track: tr ? tr.readyState : null,
+      level: mixer.level(p.id),
+    }];
+  })),
   workerStats: () => new Promise((resolve) => {
     const id = Math.random();
     const listener = (e) => {
