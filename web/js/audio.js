@@ -26,7 +26,7 @@ export class Mixer {
     this.monitor.connect(this.ctx.destination);
     this.monitorEnabled = true;
     this.sources = new Map(); // id -> { input, gain, analyser, kind, element }
-    this.guestBuses = new Map(); // guest id -> MediaStreamAudioDestinationNode
+    this.guestBuses = new Map(); // guest id -> { sum: GainNode, dest: MediaStreamAudioDestinationNode }
     this.onStage = new Set();
     this.featured = null;
     this.muted = new Set();
@@ -75,21 +75,34 @@ export class Mixer {
     this.capture?.port.postMessage({ active: false });
   }
 
-  /** The return mix for one guest; created on first use. */
-  guestTrack(guestId) {
+  guestBus(guestId) {
     let bus = this.guestBuses.get(guestId);
     if (!bus) {
-      bus = this.ctx.createMediaStreamDestination();
+      const sum = this.ctx.createGain();
+      const dest = this.ctx.createMediaStreamDestination();
+      sum.connect(dest);
+      bus = { sum, dest };
       this.guestBuses.set(guestId, bus);
       this.route();
     }
-    return bus.stream.getAudioTracks()[0];
+    return bus;
+  }
+
+  /** The return mix for one guest, as a track for WebRTC; created on first use. */
+  guestTrack(guestId) {
+    return this.guestBus(guestId).dest.stream.getAudioTracks()[0];
+  }
+
+  /** The same return mix as an audio node, for the relay. */
+  guestBusNode(guestId) {
+    return this.guestBus(guestId).sum;
   }
 
   removeGuestBus(guestId) {
     const bus = this.guestBuses.get(guestId);
     if (!bus) return;
-    bus.stream.getTracks().forEach((t) => t.stop());
+    bus.sum.disconnect();
+    bus.dest.stream.getTracks().forEach((t) => t.stop());
     this.guestBuses.delete(guestId);
     this.route();
   }
@@ -97,13 +110,16 @@ export class Mixer {
   /**
    * @param {string} id participant or source id
    * @param {'host'|'guest'|'screen'|'media'} kind
-   * @param {MediaStream|HTMLMediaElement} input
+   * @param {MediaStream|HTMLMediaElement|AudioNode} input (an AudioNode: a
+   *   relayed guest's player)
    */
   add(id, kind, input) {
     this.remove(id);
     let node;
     let element = null;
-    if (input instanceof HTMLMediaElement) {
+    if (input instanceof AudioNode) {
+      node = input;
+    } else if (input instanceof HTMLMediaElement) {
       node = this.ctx.createMediaElementSource(input);
       element = input;
     } else {
@@ -153,7 +169,7 @@ export class Mixer {
       if (inProgram) s.gain.connect(this.program);
       for (const [guestId, bus] of this.guestBuses) {
         if (guestId === id) continue;
-        if (s.kind === 'screen' || s.kind === 'media' ? inProgram : true) s.gain.connect(bus);
+        if (s.kind === 'screen' || s.kind === 'media' ? inProgram : true) s.gain.connect(bus.sum);
       }
       const hearIt = s.kind === 'host' ? false : s.kind === 'guest' || inProgram;
       if (hearIt && this.monitorEnabled) s.gain.connect(this.monitor);

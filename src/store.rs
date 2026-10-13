@@ -87,12 +87,31 @@ pub struct Settings {
     pub studio: serde_json::Value,
 }
 
-fn default_ice() -> Vec<IceServer> {
-    vec![IceServer {
-        urls: "stun:stun.l.google.com:19302".into(),
+fn stun(urls: &str) -> IceServer {
+    IceServer {
+        urls: urls.into(),
         username: None,
         credential: None,
-    }]
+    }
+}
+
+/// Two independent public STUN services, so one being blocked or down does
+/// not stop guests from finding a direct path.
+fn default_ice() -> Vec<IceServer> {
+    vec![
+        stun("stun:stun.l.google.com:19302"),
+        stun("stun:stun.cloudflare.com:3478"),
+    ]
+}
+
+/// Settings saved by older versions hold only the first STUN server; give
+/// them the current defaults. A list the user edited is left alone.
+fn upgrade_ice(servers: &mut Vec<IceServer>) -> bool {
+    if *servers == [stun("stun:stun.l.google.com:19302")] {
+        *servers = default_ice();
+        return true;
+    }
+    false
 }
 
 pub fn random_token() -> String {
@@ -130,7 +149,8 @@ impl Store {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings::default(),
             Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
         };
-        let store = Self { dir, settings };
+        let mut store = Self { dir, settings };
+        upgrade_ice(&mut store.settings.ice_servers);
         store.save()?;
         Ok(store)
     }
@@ -213,6 +233,16 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn old_default_ice_list_is_upgraded() {
+        let mut old = vec![stun("stun:stun.l.google.com:19302")];
+        assert!(upgrade_ice(&mut old));
+        assert_eq!(old, default_ice());
+        let mut custom = vec![stun("stun:example.org:3478")];
+        assert!(!upgrade_ice(&mut custom));
+        assert_eq!(custom.len(), 1);
     }
 
     #[test]

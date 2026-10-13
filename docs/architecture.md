@@ -143,6 +143,25 @@ The server answers with `started`, then a `status` message every second
   answers with its camera and microphone on the same transceivers.
 - The Rust server only relays signaling messages between the host and guests;
   guests cannot address each other.
+- **Relay fallback.** When a guest's peer connection is not `connected` about
+  10 s after the offer (or turns `failed`, or stays `disconnected`), the host
+  closes it and sends `relay-start`. Both pages then exchange media over two
+  more WebSockets through the server (`/ws/relay/guest`, authenticated with a
+  per-guest key sent only in that guest's `welcome`, and `/ws/relay/host`),
+  which work wherever the guest page loads, the Cloudflare tunnel included.
+  Media is encoded with WebCodecs (`web/js/relay.js`): H.264 (Annex B) or VP8
+  video, at most 640 px on the long side so portrait phones stay portrait, and
+  Opus or 16-bit PCM audio, each side choosing what the other can decode. Packets
+  carry sequence numbers; a gap makes the receiver ask for a keyframe. Audio
+  plays through a ~100 ms jitter buffer that skips ahead past 250 ms, so delay
+  does not grow over a long call (`relay-worklet.js`). The server forwards
+  packets without decoding them and drops them when a receiver's queue is full.
+  A relayed guest enters the mixer like any other guest, with its own
+  mix-minus bus, and the host encodes the return feed once for all relayed guests.
+- Every signaling and relay socket is pinged every 20 s, because proxies such as
+  Cloudflare close silent WebSockets. A guest whose socket drops reconnects by
+  itself for about a minute (unless the host removed them, close code 4001) and,
+  identified by a per-tab client id, goes back on stage if it was on.
 - Cameras require a secure context, so guests need HTTPS unless they are on
   `localhost`. The Invite window sets the **sharing mode** (`src/sharing.rs`),
   which can change while streamFree runs and is remembered in the settings:
@@ -150,8 +169,10 @@ The server answers with `started`, then a `status` message every second
   - *Local network*: an extra HTTPS listener on port + 1 with a self-signed
     certificate made on first use (`src/net.rs`), stopped when the mode changes.
   - *Internet*: a Cloudflare quick tunnel (`cloudflared`), started in the
-    background; the studio is notified when the public address is ready, if it
-    fails, or if the tunnel stops later. cloudflared is looked up in PATH and in
+    background. The address is announced only once cloudflared reports a
+    registered edge connection (before that, guests get an error page). A tunnel
+    that fails to start or stops later is restarted up to four times, and the
+    studio is told about the new address. cloudflared is looked up in PATH and in
     the usual Homebrew and Windows install folders, because apps started from
     Finder or the Start menu do not inherit the shell's PATH.
   `--lan`, `--tunnel` and `--public-url` (own reverse proxy) override the mode
