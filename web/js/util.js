@@ -124,6 +124,30 @@ export async function copyText(text, input = null) {
   }
 }
 
+let mediaHost = null;
+
+/**
+ * Puts a media element that is only used for its sound or frames into the
+ * page, inside an invisible container, so it is never "detached".
+ *
+ * Detached <video>/<audio> elements are fragile: some browser extensions
+ * (KDE Plasma Integration, installed by default on many Linux desktops) add
+ * such an element to the page when it starts playing and remove it again,
+ * and Chromium pauses a media element removed from the page, rejecting
+ * play() with "The play() request was interrupted because the media was
+ * removed from the document." Elements already in the page are left alone.
+ */
+export function keepInPage(el) {
+  if (!mediaHost) {
+    mediaHost = document.createElement('div');
+    mediaHost.className = 'media-host';
+    mediaHost.setAttribute('aria-hidden', 'true');
+    document.body.append(mediaHost);
+  }
+  if (el.parentNode !== mediaHost) mediaHost.append(el);
+  return el;
+}
+
 export function toast(message, kind = 'info') {
   let host = document.querySelector('.toasts');
   if (!host) {
