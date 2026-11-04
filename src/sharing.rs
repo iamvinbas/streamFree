@@ -122,7 +122,7 @@ pub async fn set_mode(state: &Shared, mode: SharingMode) {
         if mode == SharingMode::Internet {
             if s.tunnel.is_none() && s.tunnel_state != TunnelState::Starting {
                 s.tunnel_state = TunnelState::Starting;
-                tokio::spawn(start_tunnel(state.clone(), generation));
+                tokio::spawn(start_tunnel(state.clone(), generation, 1));
             }
         } else {
             if let Some(tunnel) = s.tunnel.take() {
@@ -134,10 +134,24 @@ pub async fn set_mode(state: &Shared, mode: SharingMode) {
     notify(state).await;
 }
 
-async fn start_tunnel(state: Shared, generation: u64) {
+/// How many times in a row a failed or dropped tunnel is started again before
+/// the studio shows the error.
+const TUNNEL_ATTEMPTS: u32 = 4;
+
+fn retry_tunnel(state: Shared, generation: u64, attempt: u32) {
+    let next: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(2 * u64::from(attempt))).await;
+            start_tunnel(state, generation, attempt).await;
+        });
+    tokio::spawn(next);
+}
+
+async fn start_tunnel(state: Shared, generation: u64, attempt: u32) {
     let watcher = state.clone();
     let result = net::start_tunnel(state.port, move || {
-        // The tunnel process ended on its own (network change, crash).
+        // The tunnel process ended on its own (network change, crash): start
+        // a new one. Its address differs, and the studio is told.
         tokio::spawn(async move {
             {
                 let mut s = watcher.sharing.lock().await;
@@ -146,12 +160,11 @@ async fn start_tunnel(state: Shared, generation: u64) {
                     return;
                 }
                 s.tunnel = None;
-                s.tunnel_state = TunnelState::Error(
-                    "The internet link stopped working. Choose Internet again to get a new link."
-                        .into(),
-                );
+                s.tunnel_state = TunnelState::Starting;
             }
+            tracing::warn!("the internet link stopped; starting a new one");
             notify(&watcher).await;
+            retry_tunnel(watcher, generation, 1);
         });
     })
     .await;
@@ -166,6 +179,16 @@ async fn start_tunnel(state: Shared, generation: u64) {
                 s.tunnel_state = TunnelState::On;
             }
             Ok(tunnel) => tunnel.stop().await,
+            Err(e)
+                if still_wanted
+                    && attempt < TUNNEL_ATTEMPTS
+                    && net::find_cloudflared().is_some() =>
+            {
+                tracing::warn!("internet link attempt {attempt} failed: {e:#}");
+                drop(s);
+                retry_tunnel(state.clone(), generation, attempt + 1);
+                return;
+            }
             Err(e) if still_wanted => s.tunnel_state = TunnelState::Error(format!("{e:#}")),
             Err(_) => {}
         }

@@ -75,7 +75,7 @@ export function helpTopics() {
       t('Settings → Recordings shows the folder.'),
     ]],
     [t('Troubleshooting'), [
-      t('A guest cannot connect: some company and mobile networks block direct connections. Add a TURN server in Settings → Guests.'),
+      t('Guests on strict company or mobile networks often cannot connect directly. streamFree then carries their audio and video through its own link automatically; a TURN server in Settings → Guests gives them a faster direct path.'),
       t('The stream is refused: check the stream key, and that the live event or channel is ready. Use Test in Destinations to check the server address.'),
       t('No camera on macOS: open System Settings → Privacy & Security → Camera and allow streamFree.'),
       t('Echo: use headphones, and turn off "Hear guests" in Settings if you do not need it.'),

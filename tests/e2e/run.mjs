@@ -276,7 +276,7 @@ await test('the host can remove a guest; a guest can leave and come back', async
   await receivesProgram(g.page);
   const id = await guestId('Kicked');
   await studio.evaluate((i) => window.streamFree.kick(i), id);
-  await waitFor(g.page, () => document.body.textContent.includes('connection to the studio ended'));
+  await waitFor(g.page, () => document.body.textContent.includes('removed you from the studio'));
   await waitFor(studio, (i) => !window.streamFree.people.has(i), id);
   // Leave, then rejoin from the same page.
   await g.page.click('text=Join again');
@@ -288,6 +288,122 @@ await test('the host can remove a guest; a guest can leave and come back', async
   await waitFor(g.page, () => document.body.textContent.includes('You left the studio'));
   await waitFor(studio, () => ![...window.streamFree.people.values()].some((p) => p.name === 'Returning'));
   await g.ctx.close();
+});
+
+// A guest on a network that allows no direct connection (strict NATs,
+// firewalls, many mobile networks): only relay candidates are allowed and no
+// TURN server is configured, so WebRTC cannot connect and the host must
+// switch the guest to the streamFree relay.
+async function joinRelayOnlyGuest(url, name) {
+  const gctx = await browser.newContext({ permissions: ['camera', 'microphone'], locale: 'en-US' });
+  await gctx.addInitScript(() => {
+    const Orig = window.RTCPeerConnection;
+    window.RTCPeerConnection = function (config = {}) {
+      return new Orig({ ...config, iceTransportPolicy: 'relay' });
+    };
+    window.RTCPeerConnection.prototype = Orig.prototype;
+  });
+  const page = await gctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(url);
+  await page.fill('input[aria-label="Your name"]', name);
+  await page.click('button[type=submit]');
+  return { ctx: gctx, page, errors };
+}
+
+// The guest gets the program and its mix-minus, and the host decodes the
+// guest's video (it confirms with relay-ok).
+async function receivesRelay(page, timeout = 30000) {
+  await waitFor(page, () => {
+    const r = window.streamFreeGuest.relay;
+    return r && r.videoFrames > 20 && r.audioPackets > 20 && r.hostReceiving;
+  }, null, timeout);
+}
+
+function newestRecording() {
+  const dir = join(work, 'recordings');
+  const newest = readdirSync(dir).filter((f) => f.endsWith('.mp4'))
+    .sort((a, b) => statSync(join(dir, a)).mtimeMs - statSync(join(dir, b)).mtimeMs).at(-1);
+  return join(dir, newest);
+}
+
+await test('a guest with no direct path joins through the relay', async () => {
+  const { inviteUrl } = await sharingStatus();
+  const g = await joinRelayOnlyGuest(inviteUrl, 'Faraway');
+  await receivesRelay(g.page);
+  const id = await guestId('Faraway');
+  await waitFor(studio, (i) => {
+    const s = window.streamFree.relayStats()[i];
+    return s && s.transport === 'relay' && s.videoFrames > 20 && s.audioPackets > 20 && s.track === 'live';
+  }, id, 30000);
+  // The fake microphones beep once a second: both directions carry sound.
+  const peak = await studio.evaluate(async (i) => {
+    let max = 0;
+    const end = performance.now() + 3000;
+    while (performance.now() < end) {
+      max = Math.max(max, window.streamFree.relayStats()[i]?.level || 0);
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    return max;
+  }, id);
+  assert.ok(peak > 0.01, `host hears the relayed guest (peak ${peak})`);
+  assert.ok(await g.page.evaluate(() => window.streamFreeGuest.relay.audioPeak) > 0.01, 'the relayed guest hears the studio');
+  await studio.evaluate((i) => window.streamFree.toggleStage(i), id);
+  await waitFor(g.page, () => window.streamFreeGuest.onStage === true);
+  const routing = await studio.evaluate(() => window.streamFree.routing());
+  assert.ok(routing[id].includes('program'), 'the relayed guest is in the program');
+  assert.ok(!routing[id].includes(`guest:${id}`), 'the relayed guest does not hear themselves');
+  assert.ok(routing.host.includes(`guest:${id}`), 'the relayed guest hears the host');
+  // A recording with the relayed guest on stage is as good as any other.
+  await studio.evaluate(() => window.streamFree.startBroadcast('record', []));
+  await waitFor(studio, () => window.streamFree.live.state === 'live');
+  await sleep(SECONDS * 1000);
+  await studio.evaluate(() => window.streamFree.stopBroadcast());
+  await waitFor(studio, () => window.streamFree.live.state === 'idle', null, 30000);
+  checkMedia(newestRecording(), 'recording with a relayed guest');
+  assert.deepEqual(g.errors, []);
+  await g.ctx.close();
+  await waitFor(studio, (i) => !window.streamFree.people.has(i), id);
+});
+
+await test('a guest who loses the connection comes back on stage', async () => {
+  const { inviteUrl } = await sharingStatus();
+  const g = await joinGuest(inviteUrl, 'Wobbly');
+  await receivesProgram(g.page);
+  const id = await guestId('Wobbly');
+  await studio.evaluate((i) => window.streamFree.toggleStage(i), id);
+  await waitFor(g.page, () => window.streamFreeGuest.onStage === true);
+  await g.page.evaluate(() => window.streamFreeGuest.dropConnection());
+  await waitFor(studio, (old) => {
+    const p = [...window.streamFree.people.values()].find((x) => x.name === 'Wobbly');
+    return p && p.id !== old && window.streamFree.stage.includes(p.id);
+  }, id, 20000);
+  await waitFor(g.page, () => window.streamFreeGuest.onStage === true);
+  await receivesProgram(g.page);
+  assert.deepEqual(g.errors, []);
+  await g.ctx.close();
+});
+
+await test('"Always through streamFree" sends a guest to the relay at once', async () => {
+  await studio.evaluate(() => window.streamFree.setGuestTransport('relay'));
+  try {
+    const { inviteUrl } = await sharingStatus();
+    const t0 = Date.now();
+    const g = await joinGuest(inviteUrl, 'Relayed');
+    await receivesRelay(g.page, 15000);
+    assert.ok(Date.now() - t0 < 9000, `the relay took ${Date.now() - t0} ms`);
+    assert.equal(await g.page.evaluate(() => window.streamFreeGuest.pc), null, 'no WebRTC connection');
+    const id = await guestId('Relayed');
+    await waitFor(studio, (i) => {
+      const s = window.streamFree.relayStats()[i];
+      return s && s.transport === 'relay' && s.videoFrames > 20 && s.audioPackets > 20;
+    }, id);
+    assert.deepEqual(g.errors, []);
+    await g.ctx.close();
+  } finally {
+    await studio.evaluate(() => window.streamFree.setGuestTransport('auto'));
+  }
 });
 
 await test('no more than 16 guests can join', async () => {
@@ -358,6 +474,11 @@ await test('guests on the internet join through the tunnel', async () => {
   const g = await joinGuest(status.inviteUrl, 'Remote');
   await receivesProgram(g.page, 40000);
   await g.ctx.close();
+  // And a guest with no direct path, whose media must cross the tunnel.
+  const r = await joinRelayOnlyGuest(status.inviteUrl, 'Remote relay');
+  await receivesRelay(r.page, 45000);
+  assert.deepEqual(r.errors, []);
+  await r.ctx.close();
   const back = await api('PUT', '/api/sharing', { mode: 'local' });
   assert.equal(back.tunnel.state, 'off');
 });

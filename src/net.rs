@@ -137,9 +137,11 @@ impl Tunnel {
     }
 }
 
-/// Starts `cloudflared tunnel --url http://127.0.0.1:<port>` and waits for the
-/// public `https://*.trycloudflare.com` URL it prints. `on_exit` runs if the
-/// tunnel process ends later on its own.
+/// Starts `cloudflared tunnel --url http://127.0.0.1:<port>` and waits until
+/// the public `https://*.trycloudflare.com` address it prints actually works:
+/// cloudflared prints the address before the edge has registered the tunnel,
+/// and a guest who opens the link in that window gets an error page.
+/// `on_exit` runs if the tunnel process ends later on its own.
 pub async fn start_tunnel(port: u16, on_exit: impl FnOnce() + Send + 'static) -> Result<Tunnel> {
     let program = find_cloudflared().ok_or_else(|| anyhow!("cloudflared is not installed"))?;
     let mut child = Command::new(program)
@@ -171,6 +173,20 @@ pub async fn start_tunnel(port: u16, on_exit: impl FnOnce() + Send + 'static) ->
         Ok(Err(e)) => return Err(e.into()),
         Err(_) => bail!("cloudflared did not print an address within 45 s"),
     };
+    // Then wait for the first registered edge connection. Older cloudflared
+    // versions may word it differently, so a timeout is not an error.
+    let registered = tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(line) = lines.next_line().await? {
+            if is_registered(&line) {
+                return Ok::<_, std::io::Error>(true);
+            }
+        }
+        Ok(false)
+    })
+    .await;
+    if let Ok(Ok(false)) = registered {
+        bail!("cloudflared exited before the internet link was ready");
+    }
     // Keep draining stderr so cloudflared never blocks on a full pipe; when it
     // closes, the process has ended.
     tokio::spawn(async move {
@@ -178,6 +194,10 @@ pub async fn start_tunnel(port: u16, on_exit: impl FnOnce() + Send + 'static) ->
         on_exit();
     });
     Ok(Tunnel { url, child })
+}
+
+fn is_registered(line: &str) -> bool {
+    line.contains("Registered tunnel connection")
 }
 
 fn find_tunnel_url(line: &str) -> Option<String> {
@@ -204,6 +224,16 @@ mod tests {
             find_tunnel_url("INF Requesting new quick Tunnel on trycloudflare.com..."),
             None
         );
+    }
+
+    #[test]
+    fn detects_registered_connection() {
+        assert!(is_registered(
+            "2026-10-14T10:00:02Z INF Registered tunnel connection connIndex=0 connection=abc event=0 ip=198.41.200.13 location=mxp01 protocol=quic"
+        ));
+        assert!(!is_registered(
+            "INF Starting metrics server on 127.0.0.1:20241/metrics"
+        ));
     }
 
     #[test]

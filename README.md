@@ -105,9 +105,14 @@ Browsers only allow cameras on secure (HTTPS) pages, so the Invite window asks w
 
 - **Internet links** use Cloudflare's free [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) tool:
   - install it once: `brew install cloudflared` on macOS, `winget install --id Cloudflare.cloudflared` on Windows;
-  - the address changes every time streamFree restarts;
-  - only the guest page and its signaling go through Cloudflare; audio and video travel directly between you and your guests.
-- **Guests who cannot connect** (strict company or mobile networks): add a TURN server in **Settings → Guests → ICE servers**.
+  - the address changes every time streamFree restarts (and if the link drops, streamFree makes a new one and tells you).
+- **How media travels.** Audio and video go directly between you and each guest (WebRTC) whenever the two networks allow it.
+  Strict company networks, mobile data and carrier-grade NAT often don't. After about 10 seconds without a direct connection,
+  streamFree switches that guest automatically to its **relay**: the same audio and video, compressed by the browser and carried
+  through streamFree itself, over the same link the guest opened. No account, server or setup is needed; there is a little more delay.
+  Privacy: direct connections are encrypted end to end between you and the guest. Relayed media is encrypted on the way too,
+  but with an Internet link it passes through Cloudflare's network, which decrypts and re-encrypts traffic at its edge.
+- **A faster path for those guests:** add a TURN server in **Settings → Guests → ICE servers**. **Settings → Guests → Connection** can also send every guest through the relay.
 - **Your own HTTPS proxy:** start streamFree with `--public-url https://studio.example.com`.
 
 ## Command line
@@ -162,17 +167,19 @@ streamFree is young. What has been checked, and how:
 | Recording, two simultaneous RTMP destinations, audio/video sync | Automated browser tests (real Chrome, fake camera) on every push |
 | Guests: three at once, each hearing everyone but themselves, backstage chat both ways, removing a guest, leaving and rejoining, the 16-guest limit, replacing the invite link | Automated browser tests |
 | Guests over the local network (HTTPS) and over the internet (a real Cloudflare tunnel) | Automated browser tests, run locally (CI has no cloudflared) |
+| Guests whose network allows no direct connection (simulated: relay-only ICE, no TURN): automatic switch to the relay, video and audio both ways, mix-minus, recording with them on stage, also through a real Cloudflare tunnel | Automated browser tests |
+| A guest whose connection drops comes back on stage by itself | Automated browser tests |
 | QR code, share buttons, Italian interface, every string translated | Automated browser tests |
 | RTMP output and MP4 files | FFmpeg as an independent oracle in the test suite |
 | macOS app: native window, 30 fps with the window minimized, audio in sync | Built-in smoke test (`streamfree --smoke-test 8`) |
-| macOS app hosting a guest (WebKit host, Chrome guest, program received at 15 fps) | `npm run test:native` |
+| macOS app hosting a guest (WebKit host, Chrome guest, program received at 15 fps), plus a relayed guest | `npm run test:native` |
 | macOS app: camera, microphone and screen sharing | Manual test |
 | YouTube, Twitch, Facebook (RTMPS) and Kick (RTMPS) ingest servers accept streamFree's connection, and a wrong key gets a clear error | **Test** button and `cargo run --example ingest_probe`, with a dummy key |
 
 Not verified yet:
 
 - **Going live with a real stream key.** The protocol checks above pass, but no real broadcast has been made yet. Please report what works for you.
-- **Phones and other browsers as guests.** No guest has yet joined from a phone on mobile data, or from Safari or Firefox.
+- **Phones and other browsers as guests.** No guest has yet joined from a phone on mobile data, or from Safari or Firefox. The relay is tested with a simulated strict network, not yet with a real one.
 - **Windows.** The app and installer build and pass the test suite in CI, but have not been run on a Windows PC yet.
 - **Linux hosting.** Chrome on Linux appears to have no AAC encoder, so on Linux streamFree may only work for guests; it shows a clear error if so.
 

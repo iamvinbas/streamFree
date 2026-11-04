@@ -105,9 +105,14 @@ I browser consentono la videocamera solo su pagine sicure (HTTPS), quindi la fin
 
 - **I link internet** usano lo strumento gratuito di Cloudflare [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/):
   - va installato una volta: `brew install cloudflared` su macOS, `winget install --id Cloudflare.cloudflared` su Windows;
-  - l'indirizzo cambia a ogni riavvio di streamFree;
-  - attraverso Cloudflare passano solo la pagina ospite e la segnalazione; audio e video viaggiano direttamente tra te e gli ospiti.
-- **Ospiti che non riescono a connettersi** (reti aziendali o mobili restrittive): aggiungi un server TURN in **Impostazioni → Ospiti → Server ICE**.
+  - l'indirizzo cambia a ogni riavvio di streamFree (e se il link cade, streamFree ne crea uno nuovo e te lo segnala).
+- **Come viaggiano audio e video.** Audio e video passano direttamente tra te e ogni ospite (WebRTC) quando le due reti lo permettono.
+  Reti aziendali restrittive, rete mobile e CGNAT degli operatori spesso non lo permettono. Dopo circa 10 secondi senza connessione diretta,
+  streamFree passa automaticamente quell'ospite al suo **relay**: lo stesso audio e video, compressi dal browser e trasportati
+  da streamFree stesso, sullo stesso link che l'ospite ha aperto. Non servono account, server o configurazioni; il ritardo è un po' maggiore.
+  Privacy: le connessioni dirette sono cifrate end-to-end tra te e l'ospite. Anche il media del relay viaggia cifrato,
+  ma con un link Internet passa dalla rete di Cloudflare, che decifra e ricifra il traffico ai suoi nodi.
+- **Un percorso più veloce per quegli ospiti:** aggiungi un server TURN in **Impostazioni → Ospiti → Server ICE**. **Impostazioni → Ospiti → Connessione** può anche far passare tutti gli ospiti dal relay.
 - **Un tuo proxy HTTPS:** avvia streamFree con `--public-url https://studio.example.com`.
 
 ## Riga di comando
@@ -162,17 +167,19 @@ streamFree è giovane. Cosa è stato verificato, e come:
 | Registrazione, due destinazioni RTMP in contemporanea, sincronia audio/video | Test automatici nel browser (Chrome vero, videocamera simulata) a ogni push |
 | Ospiti: tre insieme, ognuno sente tutti tranne se stesso, chat del backstage nei due sensi, rimozione di un ospite, uscita e rientro, limite di 16 ospiti, sostituzione del link di invito | Test automatici nel browser |
 | Ospiti dalla rete locale (HTTPS) e da internet (tunnel Cloudflare reale) | Test automatici nel browser, eseguiti in locale (in CI manca cloudflared) |
+| Ospiti la cui rete non permette connessioni dirette (simulata: ICE solo relay, senza TURN): passaggio automatico al relay, video e audio nei due sensi, mix-minus, registrazione con l'ospite sul palco, anche attraverso un tunnel Cloudflare reale | Test automatici nel browser |
+| Un ospite la cui connessione cade torna sul palco da solo | Test automatici nel browser |
 | QR code, pulsanti di condivisione, interfaccia in italiano, ogni stringa tradotta | Test automatici nel browser |
 | Uscita RTMP e file MP4 | FFmpeg come verificatore indipendente nella suite di test |
 | App macOS: finestra nativa, 30 fps con la finestra ridotta a icona, audio sincronizzato | Smoke test integrato (`streamfree --smoke-test 8`) |
-| App macOS che ospita un ospite (host WebKit, ospite Chrome, programma ricevuto a 15 fps) | `npm run test:native` |
+| App macOS che ospita un ospite (host WebKit, ospite Chrome, programma ricevuto a 15 fps), più un ospite tramite relay | `npm run test:native` |
 | App macOS: videocamera, microfono e condivisione schermo | Test manuale |
 | I server di YouTube, Twitch, Facebook (RTMPS) e Kick (RTMPS) accettano la connessione di streamFree, e una chiave sbagliata dà un errore chiaro | Pulsante **Prova** e `cargo run --example ingest_probe`, con una chiave fittizia |
 
 Non ancora verificato:
 
 - **Una diretta con una chiave vera.** I controlli di protocollo qui sopra passano, ma nessuna diretta reale è stata ancora fatta. Segnala cosa funziona per te.
-- **Ospiti da telefono e da altri browser.** Nessun ospite è ancora entrato da un telefono in rete mobile, né da Safari o Firefox.
+- **Ospiti da telefono e da altri browser.** Nessun ospite è ancora entrato da un telefono in rete mobile, né da Safari o Firefox. Il relay è testato con una rete restrittiva simulata, non ancora con una reale.
 - **Windows.** App e installer si compilano e passano i test in CI, ma non sono ancora stati eseguiti su un PC Windows.
 - **Condurre da Linux.** Chrome su Linux sembra non avere un encoder AAC, quindi su Linux streamFree potrebbe funzionare solo per gli ospiti; in quel caso mostra un errore chiaro.
 
