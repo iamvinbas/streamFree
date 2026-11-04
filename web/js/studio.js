@@ -814,7 +814,8 @@ function relayFrame(g, frame) {
     renderPeople();
   }
   if (r.writer) {
-    if ((r.writer.desiredSize ?? 1) > 0) r.writer.write(frame).catch(() => {});
+    // A rejected write (the track stopped) leaves the frame to us.
+    if ((r.writer.desiredSize ?? 1) > 0) r.writer.write(frame).catch(() => frame.close());
     else frame.close();
     return;
   }
