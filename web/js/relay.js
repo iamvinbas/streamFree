@@ -17,6 +17,8 @@
 //   audio packets then carry:   format u8 (1 Opus, 2 PCM s16), channels u8, sample rate u32
 //   followed by the encoded data.
 
+import { keepInPage } from './util.js';
+
 export const VIDEO = 1;
 export const AUDIO = 2;
 const OPUS = 1;
@@ -168,7 +170,8 @@ export class VideoSender {
       read();
     } else {
       // Safari and Firefox: read the track through a <video> element.
-      const video = document.createElement('video');
+      // In the page, not detached: see keepInPage().
+      const video = keepInPage(document.createElement('video'));
       video.muted = true;
       video.playsInline = true;
       video.srcObject = new MediaStream([track]);
@@ -189,6 +192,7 @@ export class VideoSender {
     this.reader = null;
     if (this.video) {
       this.video.srcObject = null;
+      this.video.remove();
       this.video = null;
     }
   }
