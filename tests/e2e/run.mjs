@@ -202,8 +202,14 @@ await test('guest joins over WebRTC, goes on stage and receives the program', as
     return v && v.videoWidth > 0 && v.srcObject?.getAudioTracks().length === 1;
   }, null, 20000);
   assert.ok(await studio.evaluate((id) => window.streamFree.stage.includes(id), id));
-  await guestCtx.close();
-  await waitFor(studio, (id) => !window.streamFree.people.has(id), id);
+  // A baseline for the relay test: the same recording with a WebRTC guest.
+  try {
+    const frames = probe(await recordProgram()).frames;
+    console.log(`     note: recording with a WebRTC guest on stage: ${frames} video frames in ${SECONDS} s`);
+  } finally {
+    await guestCtx.close();
+    await waitFor(studio, (id) => !window.streamFree.people.has(id), id);
+  }
 });
 
 
@@ -321,6 +327,16 @@ async function receivesRelay(page, timeout = 30000) {
   }, null, timeout);
 }
 
+// Records SECONDS of the program; returns the file.
+async function recordProgram() {
+  await studio.evaluate(() => window.streamFree.startBroadcast('record', []));
+  await waitFor(studio, () => window.streamFree.live.state === 'live');
+  await sleep(SECONDS * 1000);
+  await studio.evaluate(() => window.streamFree.stopBroadcast());
+  await waitFor(studio, () => window.streamFree.live.state === 'idle', null, 30000);
+  return newestRecording();
+}
+
 function newestRecording() {
   const dir = join(work, 'recordings');
   const newest = readdirSync(dir).filter((f) => f.endsWith('.mp4'))
@@ -331,6 +347,16 @@ function newestRecording() {
 await test('a guest with no direct path joins through the relay', async () => {
   const { inviteUrl } = await sharingStatus();
   const g = await joinRelayOnlyGuest(inviteUrl, 'Faraway');
+  // Always leave, or this guest holds a slot through the next tests.
+  try {
+    await relayGuestWorks(g);
+  } finally {
+    await g.ctx.close();
+    await waitFor(studio, () => ![...window.streamFree.people.values()].some((p) => p.name === 'Faraway'));
+  }
+});
+
+async function relayGuestWorks(g) {
   await receivesRelay(g.page);
   const id = await guestId('Faraway');
   await waitFor(studio, (i) => {
@@ -356,16 +382,11 @@ await test('a guest with no direct path joins through the relay', async () => {
   assert.ok(!routing[id].includes(`guest:${id}`), 'the relayed guest does not hear themselves');
   assert.ok(routing.host.includes(`guest:${id}`), 'the relayed guest hears the host');
   // A recording with the relayed guest on stage is as good as any other.
-  await studio.evaluate(() => window.streamFree.startBroadcast('record', []));
-  await waitFor(studio, () => window.streamFree.live.state === 'live');
-  await sleep(SECONDS * 1000);
-  await studio.evaluate(() => window.streamFree.stopBroadcast());
-  await waitFor(studio, () => window.streamFree.live.state === 'idle', null, 30000);
-  checkMedia(newestRecording(), 'recording with a relayed guest');
+  const file = await recordProgram();
+  console.log(`     note: recording with a relayed guest on stage: ${probe(file).frames} video frames in ${SECONDS} s`);
+  checkMedia(file, 'recording with a relayed guest');
   assert.deepEqual(g.errors, []);
-  await g.ctx.close();
-  await waitFor(studio, (i) => !window.streamFree.people.has(i), id);
-});
+}
 
 await test('a guest who loses the connection comes back on stage', async () => {
   const { inviteUrl } = await sharingStatus();
@@ -416,12 +437,15 @@ await test('no more than 16 guests can join', async () => {
     ws.onerror = () => resolve({ ws, ok: false });
   });
   const sockets = [];
-  for (let i = 0; i < 16; i++) sockets.push(await open(wsUrl));
-  assert.equal(sockets.filter((s) => s.ok).length, 16, '16 guests are allowed');
-  const extra = await open(wsUrl);
-  assert.equal(extra.ok, false, 'the 17th guest is refused');
-  for (const s of sockets) s.ws.close();
-  await waitFor(studio, () => ![...window.streamFree.people.values()].some((p) => p.kind === 'guest'));
+  try {
+    for (let i = 0; i < 16; i++) sockets.push(await open(wsUrl));
+    assert.equal(sockets.filter((s) => s.ok).length, 16, '16 guests are allowed');
+    sockets.push(await open(wsUrl));
+    assert.equal(sockets.at(-1).ok, false, 'the 17th guest is refused');
+  } finally {
+    for (const s of sockets) s.ws.close();
+    await waitFor(studio, () => ![...window.streamFree.people.values()].some((p) => p.kind === 'guest'));
+  }
 });
 
 await test('a new invite link replaces the old one', async () => {
@@ -445,8 +469,11 @@ await test('guests on the local network join over HTTPS', async () => {
   assert.equal(status.mode, 'lan');
   assert.ok(status.inviteUrl.startsWith('https://'), status.inviteUrl);
   const g = await joinGuest(status.inviteUrl, 'Lan', { ignoreHTTPSErrors: true });
-  await receivesProgram(g.page);
-  await g.ctx.close();
+  try {
+    await receivesProgram(g.page);
+  } finally {
+    await g.ctx.close();
+  }
   const back = await api('PUT', '/api/sharing', { mode: 'local' });
   assert.equal(back.mode, 'local');
   assert.ok(back.inviteUrl.startsWith('http://localhost'), 'back to local');
