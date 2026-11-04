@@ -7,7 +7,7 @@
 **The free live-streaming studio that runs on your computer.**
 
 Invite guests from a link, add your branding, stream to YouTube, Twitch, Facebook
-and any RTMP server at once, and record to MP4. A desktop app under 5 MB,
+and any RTMP server at once, and record to MP4. A desktop app under 8 MB,
 with no account, no subscription and no watermark.
 
 [![Latest release](https://img.shields.io/github/v/release/iamvinbas/streamFree?color=6d5efc)](https://github.com/iamvinbas/streamFree/releases/latest)
