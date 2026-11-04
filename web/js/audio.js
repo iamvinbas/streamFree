@@ -8,6 +8,8 @@
 // * monitor: what the host hears on their speakers — everyone except the
 //   host's own microphone.
 
+import { keepInPage } from './util.js';
+
 export class Mixer {
   constructor() {
     this.ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
@@ -111,7 +113,7 @@ export class Mixer {
       if (kind === 'guest') {
         // Chrome only delivers remote WebRTC audio to Web Audio while the
         // stream is also attached to a media element.
-        element = new Audio();
+        element = keepInPage(new Audio());
         element.muted = true;
         element.srcObject = input;
         element.play().catch(() => {});
@@ -132,7 +134,10 @@ export class Mixer {
     if (!s) return;
     s.input.disconnect();
     s.gain.disconnect();
-    if (s.element && s.kind === 'guest') s.element.srcObject = null;
+    if (s.element && s.kind === 'guest') {
+      s.element.srcObject = null;
+      s.element.remove();
+    }
     this.sources.delete(id);
     this.route();
   }

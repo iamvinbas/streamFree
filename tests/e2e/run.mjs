@@ -379,6 +379,54 @@ await test('the studio speaks Italian when the system does', async () => {
   await itCtx.close();
 });
 
+// Some browser extensions (KDE Plasma Integration, on by default on many
+// Linux desktops) briefly insert and remove a detached <video>/<audio> when it
+// starts playing; Chromium then pauses it and play() rejects with "the media
+// was removed from the document" (issue #2). This mimics that behaviour.
+const DETACHED_MEDIA_MOVER = `(() => {
+  const create = Document.prototype.createElement;
+  Document.prototype.createElement = function (...args) {
+    const el = create.apply(this, args);
+    if (typeof args[0] === 'string' && /^(audio|video)$/i.test(args[0])) {
+      el.addEventListener('play', () => {
+        if (!el.isConnected) {
+          document.documentElement.appendChild(el);
+          el.remove();
+        }
+      }, { once: true });
+    }
+    return el;
+  };
+})();`;
+
+await test('a video clip plays even with an extension that moves detached media', async () => {
+  const clip = join(work, 'clip.mp4');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+    '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart', clip]);
+  const cctx = await browser.newContext({ permissions: ['camera', 'microphone'], locale: 'en-US' });
+  await cctx.addInitScript(DETACHED_MEDIA_MOVER);
+  const page = await cctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(server.studio);
+  await waitFor(page, () => window.streamFree?.people.get('host'));
+  await page.click('button[aria-label="Video clips"]');
+  await page.setInputFiles('#dialog input[type=file]', clip);
+  await page.waitForSelector('#dialog .asset-list li button:has-text("Play")');
+  await page.click('#dialog .asset-list li button:has-text("Play")');
+  await waitFor(page, () => window.streamFree.people.has('media'));
+  await sleep(1000);
+  const state = await page.evaluate(() => {
+    const v = document.querySelector('.media-host video');
+    return { inPage: !!v, playing: !!v && !v.paused, time: v?.currentTime || 0 };
+  });
+  assert.ok(state.inPage && state.playing && state.time > 0.3, `clip state ${JSON.stringify(state)}`);
+  const toasts = await page.evaluate(() => [...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' | '));
+  assert.ok(!toasts.includes('Cannot play'), toasts);
+  assert.deepEqual(errors, []);
+  await cctx.close();
+});
+
 await test('every interface string has an Italian translation', async () => {
   const { IT } = await import('../../web/js/i18n.js');
   const { readFileSync } = await import('node:fs');
