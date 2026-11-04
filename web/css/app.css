@@ -335,3 +335,9 @@ details.guide p { margin: 6px 0 0; font-size: 13px; }
   [data-panel="left"] .sidebar { order: 0; border-right: 0; }
   .invite-share { flex-direction: column; }
 }
+
+/* Invisible home for media elements used only for their sound or frames
+   (see keepInPage in util.js). Kept on screen at 1 px, not display: none, so
+   no browser treats them as hidden and throttles them. */
+.media-host { position: fixed; left: 0; top: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; z-index: -1; }
+.media-host > * { width: 1px; height: 1px; }

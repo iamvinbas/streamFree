@@ -10,7 +10,7 @@ import { Mixer } from './audio.js';
 import { t, setLang, getLang, detectLang } from './i18n.js';
 import { PLATFORMS, platformGuide, helpTopics, cloudflaredInstall } from './help.js';
 import {
-  h, icon, makeApi, hostToken, debounce, formatDuration, formatBytes, toast, copyText,
+  h, icon, makeApi, hostToken, debounce, formatDuration, formatBytes, toast, copyText, keepInPage,
 } from './util.js';
 
 const token = hostToken();
@@ -481,6 +481,7 @@ function stopSource(id) {
     mediaElement.pause();
     mediaElement.removeAttribute('src');
     mediaElement.load();
+    mediaElement.remove();
     mediaElement = null;
   }
   renderAll();
@@ -490,6 +491,8 @@ function stopSource(id) {
 async function playMedia(asset) {
   stopSource('media');
   const video = h('video', { src: api.assetUrl(asset.id), playsInline: true, preload: 'auto' });
+  // In the page before play(): see keepInPage().
+  keepInPage(video);
   mediaElement = video;
   await mixer.resume();
   try {
