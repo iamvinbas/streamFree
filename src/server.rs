@@ -20,25 +20,29 @@ use crate::rtmp::Target;
 use crate::store::{random_token, Destination, IceServer, Store};
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, State};
+use axum::http::request::Parts;
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use rust_embed::RustEmbed;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
+use tokio::sync::{
+    broadcast, mpsc, oneshot, watch, Mutex, OwnedSemaphorePermit, RwLock, Semaphore,
+};
 
 #[derive(RustEmbed)]
 #[folder = "web/"]
 struct Web;
 
 const MAX_GUESTS: usize = 16;
+const MAX_GUEST_SIGNAL_MESSAGE: usize = 64 * 1024;
 const MAX_ASSET_BYTES: usize = 512 * 1024 * 1024;
 /// Proxies (Cloudflare among them) close WebSockets that stay silent for
 /// about 100 s; a ping keeps backstage guests connected.
@@ -50,6 +54,10 @@ const KICKED: &str = "\u{0}kicked";
 const CLOSE_REMOVED: u16 = 4001;
 /// Largest relay message (one encoded frame plus its header).
 const MAX_RELAY_MESSAGE: usize = 2 * 1024 * 1024;
+const MAX_PENDING_INGEST_PACKETS: usize = 1000;
+const MAX_PENDING_INGEST_BYTES: usize = 16 * 1024 * 1024;
+const INGEST_START_TIMEOUT: Duration = Duration::from_secs(30);
+const INGEST_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct Guest {
     name: String,
@@ -58,14 +66,43 @@ struct Guest {
     cid: String,
     /// Lets this guest, and only this guest, open its relay socket.
     relay_key: String,
+    relay_slot: Arc<Semaphore>,
     tx: mpsc::Sender<String>,
+}
+
+struct GuestRelay {
+    outgoing: mpsc::Sender<Message>,
+    slot: Arc<Semaphore>,
+    /// Dropping the route cancels the relay, even during a blocked write.
+    _revoked: oneshot::Sender<()>,
 }
 
 /// Where relayed media goes: the host page's relay socket and each guest's.
 #[derive(Default)]
 struct RelayRoutes {
     host: Option<mpsc::Sender<Message>>,
-    guests: HashMap<String, mpsc::Sender<Message>>,
+    guests: HashMap<String, GuestRelay>,
+}
+
+impl RelayRoutes {
+    fn owns_guest(&self, id: &str, slot: &Arc<Semaphore>) -> bool {
+        self.guests
+            .get(id)
+            .is_some_and(|route| Arc::ptr_eq(&route.slot, slot))
+    }
+
+    fn send_to_host(&self, msg: Message) {
+        if let Some(host) = &self.host {
+            let _ = host.try_send(msg);
+        }
+    }
+
+    fn remove_guest(&mut self, id: &str, slot: &Arc<Semaphore>) {
+        if self.owns_guest(id, slot) {
+            self.guests.remove(id);
+            self.send_to_host(relay_event("relay-closed", id));
+        }
+    }
 }
 
 pub struct AppState {
@@ -82,6 +119,7 @@ pub struct AppState {
     router: std::sync::OnceLock<Router>,
     host_tx: Mutex<Option<mpsc::Sender<String>>>,
     guests: Mutex<HashMap<String, Guest>>,
+    guest_slots: Arc<Semaphore>,
     relay: Mutex<RelayRoutes>,
     events: broadcast::Sender<Value>,
     live: Mutex<bool>,
@@ -107,6 +145,7 @@ impl AppState {
             router: std::sync::OnceLock::new(),
             host_tx: Mutex::new(None),
             guests: Mutex::new(HashMap::new()),
+            guest_slots: Arc::new(Semaphore::new(MAX_GUESTS)),
             relay: Mutex::new(RelayRoutes::default()),
             events,
             live: Mutex::new(false),
@@ -252,10 +291,31 @@ async fn is_host(state: &AppState, headers: &HeaderMap, query: &TokenQuery) -> b
     given.is_some_and(|g| constant_eq(&g, &expected))
 }
 
+fn unauthorized_host() -> Response {
+    (StatusCode::UNAUTHORIZED, "missing or wrong host token").into_response()
+}
+
+/// Use before a body extractor so unauthenticated callers cannot buffer a request.
+struct HostAuth;
+
+impl FromRequestParts<Shared> for HostAuth {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &Shared) -> Result<Self, Response> {
+        let Query(query) =
+            Query::<TokenQuery>::try_from_uri(&parts.uri).map_err(IntoResponse::into_response)?;
+        if is_host(state, &parts.headers, &query).await {
+            Ok(Self)
+        } else {
+            Err(unauthorized_host())
+        }
+    }
+}
+
 macro_rules! require_host {
     ($state:expr, $headers:expr, $query:expr) => {
         if !is_host(&$state, &$headers, &$query).await {
-            return (StatusCode::UNAUTHORIZED, "missing or wrong host token").into_response();
+            return unauthorized_host();
         }
     };
 }
@@ -336,12 +396,10 @@ struct SharingInput {
 }
 
 async fn put_sharing(
+    _: HostAuth,
     State(state): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<TokenQuery>,
     Json(input): Json<SharingInput>,
 ) -> Response {
-    require_host!(state, headers, q);
     {
         let mut store = state.store.lock().await;
         store.settings.sharing_mode = input.mode;
@@ -445,12 +503,10 @@ fn default_true() -> bool {
 }
 
 async fn save_destination(
+    _: HostAuth,
     State(state): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<TokenQuery>,
     Json(input): Json<DestinationInput>,
 ) -> Response {
-    require_host!(state, headers, q);
     let mut store = state.store.lock().await;
     let existing_key = input
         .id
@@ -509,12 +565,10 @@ async fn get_studio(
 }
 
 async fn put_studio(
+    _: HostAuth,
     State(state): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<TokenQuery>,
     Json(value): Json<Value>,
 ) -> Response {
-    require_host!(state, headers, q);
     let mut store = state.store.lock().await;
     store.settings.studio = value;
     match store.save() {
@@ -524,12 +578,10 @@ async fn put_studio(
 }
 
 async fn put_ice(
+    _: HostAuth,
     State(state): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<TokenQuery>,
     Json(servers): Json<Vec<IceServer>>,
 ) -> Response {
-    require_host!(state, headers, q);
     let mut store = state.store.lock().await;
     store.settings.ice_servers = servers;
     match store.save() {
@@ -556,7 +608,6 @@ async fn reset_invite(
 
 #[derive(Deserialize)]
 struct AssetQuery {
-    t: Option<String>,
     name: Option<String>,
 }
 
@@ -586,12 +637,12 @@ fn asset_extension(content_type: &str, name: &str) -> Option<&'static str> {
 }
 
 async fn upload_asset(
+    _: HostAuth,
     State(state): State<Shared>,
     headers: HeaderMap,
     Query(q): Query<AssetQuery>,
     body: Bytes,
 ) -> Response {
-    require_host!(state, headers, TokenQuery { t: q.t.clone() });
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -641,12 +692,10 @@ struct ChannelInput {
 }
 
 async fn start_twitch(
+    _: HostAuth,
     State(state): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<TokenQuery>,
     Json(input): Json<ChannelInput>,
 ) -> Response {
-    require_host!(state, headers, q);
     let Some(channel) = chat::normalize_channel(&input.channel) else {
         return (StatusCode::BAD_REQUEST, "not a valid Twitch channel name").into_response();
     };
@@ -797,7 +846,7 @@ async fn remove_guest(state: &Shared, id: &str, kicked: bool) {
         if kicked {
             let _ = guest.tx.try_send(KICKED.to_owned());
         }
-        state.relay.lock().await.guests.remove(id);
+        state.relay.lock().await.remove_guest(id, &guest.relay_slot);
         state.to_host(json!({"type": "guest-left", "id": id})).await;
     }
 }
@@ -809,6 +858,41 @@ struct GuestQuery {
     name: String,
     #[serde(default)]
     cid: String,
+}
+
+/// These are the only signaling events that a guest may send to the studio.
+#[derive(Deserialize, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+enum GuestSignal {
+    Answer {
+        sdp: String,
+    },
+    Candidate {
+        candidate: serde_json::Map<String, Value>,
+    },
+    State {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mic_on: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cam_on: Option<bool>,
+    },
+    RelayReady {
+        caps: serde_json::Map<String, Value>,
+    },
+    Chat {
+        text: String,
+    },
+}
+
+#[derive(Serialize)]
+struct GuestSignalEvent<'a> {
+    from: &'a str,
+    #[serde(flatten)]
+    signal: GuestSignal,
 }
 
 /// Keeps `s` only if it is a short run of ASCII letters, digits and dashes.
@@ -829,9 +913,10 @@ async fn guest_ws(
     if !constant_eq(&q.invite, &expected) {
         return (StatusCode::FORBIDDEN, "invalid invite").into_response();
     }
-    if state.guests.lock().await.len() >= MAX_GUESTS {
+    // Reserve capacity before Axum schedules the upgrade callback.
+    let Ok(slot) = state.guest_slots.clone().try_acquire_owned() else {
         return (StatusCode::SERVICE_UNAVAILABLE, "the studio is full").into_response();
-    }
+    };
     let name: String = q
         .name
         .trim()
@@ -845,21 +930,35 @@ async fn guest_ws(
         name
     };
     let cid = clean_id(&q.cid);
-    ws.on_upgrade(move |socket| guest_session(state, socket, name, cid))
+    ws.max_message_size(MAX_GUEST_SIGNAL_MESSAGE)
+        .max_frame_size(MAX_GUEST_SIGNAL_MESSAGE)
+        .on_upgrade(move |socket| async move {
+            let _slot = slot;
+            guest_session(state, socket, name, cid).await;
+        })
 }
 
 async fn guest_session(state: Shared, mut socket: WebSocket, name: String, cid: String) {
-    let id = random_token()[..12].to_owned();
     let relay_key = random_token();
     let (tx, mut rx) = mpsc::channel::<String>(256);
     let guest = Guest {
-        name: name.clone(),
-        cid: cid.clone(),
+        name,
+        cid,
         relay_key: relay_key.clone(),
+        relay_slot: Arc::new(Semaphore::new(1)),
         tx,
     };
-    let summary = guest_summary(&id, &guest);
-    state.guests.lock().await.insert(id.clone(), guest);
+    let (id, summary) = {
+        let mut guests = state.guests.lock().await;
+        loop {
+            let id = random_token()[..12].to_owned();
+            if let Entry::Vacant(entry) = guests.entry(id.clone()) {
+                let summary = guest_summary(&id, &guest);
+                entry.insert(guest);
+                break (id, summary);
+            }
+        }
+    };
     let ice = state.store.lock().await.settings.ice_servers.clone();
     let welcome = json!({"type": "welcome", "id": id, "iceServers": ice, "relayKey": relay_key});
     let mut kicked = false;
@@ -877,11 +976,8 @@ async fn guest_session(state: Shared, mut socket: WebSocket, name: String, cid: 
                 incoming = socket.recv() => {
                     let Some(Ok(msg)) = incoming else { break };
                     let Message::Text(text) = msg else { continue };
-                    if text.len() > 64 * 1024 { continue }
-                    let Ok(mut value) = serde_json::from_str::<Value>(&text) else { continue };
-                    value["from"] = id.clone().into();
-                    if let Some(obj) = value.as_object_mut() { obj.remove("to"); }
-                    state.to_host(value).await;
+                    let Ok(signal) = serde_json::from_str::<GuestSignal>(&text) else { continue };
+                    state.to_host(json!(GuestSignalEvent { from: &id, signal })).await;
                 }
                 outgoing = rx.recv() => {
                     // The sender is dropped when the guest is removed.
@@ -917,6 +1013,12 @@ struct RelayGuestQuery {
     key: String,
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum GuestRelaySignal {
+    Key,
+}
+
 async fn relay_host_ws(
     State(state): State<Shared>,
     headers: HeaderMap,
@@ -946,7 +1048,7 @@ async fn relay_host_session(state: Shared, mut socket: WebSocket) {
                         if let Some(guest) = relay.guests.get(id) {
                             // A full queue means the guest's link is slower than the
                             // stream: drop the frame, the receiver asks for a keyframe.
-                            let _ = guest.try_send(Message::Binary(Bytes::copy_from_slice(payload)));
+                            let _ = guest.outgoing.try_send(Message::Binary(Bytes::copy_from_slice(payload)));
                         }
                     }
                     Message::Text(text) => {
@@ -955,7 +1057,7 @@ async fn relay_host_session(state: Shared, mut socket: WebSocket) {
                         if let Some(obj) = value.as_object_mut() { obj.remove("to"); }
                         let relay = state.relay.lock().await;
                         if let Some(guest) = relay.guests.get(&to) {
-                            let _ = guest.try_send(Message::Text(value.to_string().into()));
+                            let _ = guest.outgoing.try_send(Message::Text(value.to_string().into()));
                         }
                     }
                     _ => {}
@@ -1000,80 +1102,94 @@ async fn relay_guest_ws(
     if !constant_eq(&q.invite, &expected) {
         return (StatusCode::FORBIDDEN, "invalid invite").into_response();
     }
-    let allowed = state
-        .guests
-        .lock()
-        .await
-        .get(&q.id)
-        .is_some_and(|g| constant_eq(&q.key, &g.relay_key));
-    if !allowed {
-        return (StatusCode::FORBIDDEN, "unknown guest").into_response();
-    }
+    let permit = {
+        let guests = state.guests.lock().await;
+        let Some(guest) = guests
+            .get(&q.id)
+            .filter(|g| constant_eq(&q.key, &g.relay_key))
+        else {
+            return (StatusCode::FORBIDDEN, "unknown guest").into_response();
+        };
+        let Ok(permit) = guest.relay_slot.clone().try_acquire_owned() else {
+            return (StatusCode::CONFLICT, "guest relay already connected").into_response();
+        };
+        permit
+    };
     ws.max_message_size(MAX_RELAY_MESSAGE)
-        .on_upgrade(move |socket| relay_guest_session(state, socket, q.id))
+        .on_upgrade(move |socket| relay_guest_session(state, socket, q.id, permit))
 }
 
-async fn relay_guest_session(state: Shared, mut socket: WebSocket, id: String) {
+fn relay_event(kind: &str, id: &str) -> Message {
+    Message::Text(json!({"type": kind, "from": id}).to_string().into())
+}
+
+async fn relay_guest_session(
+    state: Shared,
+    mut socket: WebSocket,
+    id: String,
+    permit: OwnedSemaphorePermit,
+) {
+    let slot = permit.semaphore();
     let (tx, mut rx) = mpsc::channel::<Message>(128);
-    state
-        .relay
-        .lock()
-        .await
-        .guests
-        .insert(id.clone(), tx.clone());
-    to_relay_host(
-        &state,
-        Message::Text(json!({"type": "relay-open", "from": id}).to_string().into()),
-    )
-    .await;
-    let mut ping = keepalive();
-    loop {
-        tokio::select! {
-            incoming = socket.recv() => {
-                let Some(Ok(msg)) = incoming else { break };
-                match msg {
-                    Message::Binary(data) => {
-                        to_relay_host(&state, Message::Binary(join_relay(&id, &data))).await;
-                    }
-                    Message::Text(text) => {
-                        if text.len() > 64 * 1024 { continue }
-                        let Ok(mut value) = serde_json::from_str::<Value>(&text) else { continue };
-                        value["from"] = id.clone().into();
-                        to_relay_host(&state, Message::Text(value.to_string().into())).await;
-                    }
-                    _ => {}
+    let (revoked, on_revoked) = oneshot::channel();
+    {
+        // The guest may have left while the HTTP upgrade was pending. Keep
+        // the guest locked until the relay route is registered.
+        let guests = state.guests.lock().await;
+        if !guests
+            .get(&id)
+            .is_some_and(|g| Arc::ptr_eq(&g.relay_slot, slot))
+        {
+            return;
+        }
+        let mut routes = state.relay.lock().await;
+        routes.guests.insert(
+            id.clone(),
+            GuestRelay {
+                outgoing: tx,
+                slot: slot.clone(),
+                _revoked: revoked,
+            },
+        );
+        routes.send_to_host(relay_event("relay-open", &id));
+    }
+
+    let forward = async {
+        let mut ping = keepalive();
+        loop {
+            tokio::select! {
+                incoming = socket.recv() => {
+                    let Some(Ok(msg)) = incoming else { break };
+                    let msg = match msg {
+                        Message::Binary(data) => Message::Binary(join_relay(&id, &data)),
+                        Message::Text(text) => {
+                            if text.len() > MAX_GUEST_SIGNAL_MESSAGE { continue }
+                            let Ok(GuestRelaySignal::Key) = serde_json::from_str(&text) else { continue };
+                            relay_event("key", &id)
+                        }
+                        Message::Close(_) => break,
+                        _ => continue,
+                    };
+                    let routes = state.relay.lock().await;
+                    if !routes.owns_guest(&id, slot) { break }
+                    routes.send_to_host(msg);
+                }
+                outgoing = rx.recv() => {
+                    let Some(msg) = outgoing else { break };
+                    if socket.send(msg).await.is_err() { break }
+                }
+                _ = ping.tick() => {
+                    if socket.send(Message::Ping(Bytes::new())).await.is_err() { break }
                 }
             }
-            outgoing = rx.recv() => {
-                // The route is removed (and this sender dropped) when the guest leaves.
-                let Some(msg) = outgoing else { break };
-                if socket.send(msg).await.is_err() { break }
-            }
-            _ = ping.tick() => {
-                if socket.send(Message::Ping(Bytes::new())).await.is_err() { break }
-            }
         }
+    };
+    tokio::select! {
+        biased;
+        _ = on_revoked => {}
+        _ = forward => {}
     }
-    let mut relay = state.relay.lock().await;
-    if relay.guests.get(&id).is_some_and(|g| g.same_channel(&tx)) {
-        relay.guests.remove(&id);
-    }
-    drop(relay);
-    to_relay_host(
-        &state,
-        Message::Text(
-            json!({"type": "relay-closed", "from": id})
-                .to_string()
-                .into(),
-        ),
-    )
-    .await;
-}
-
-async fn to_relay_host(state: &Shared, msg: Message) {
-    if let Some(host) = state.relay.lock().await.host.as_ref() {
-        let _ = host.try_send(msg);
-    }
+    state.relay.lock().await.remove_guest(&id, slot);
 }
 
 // ---------------------------------------------------------------- media ingest
@@ -1173,18 +1289,20 @@ async fn send_json(socket: &mut WebSocket, value: Value) -> bool {
         .is_ok()
 }
 
+async fn send_ingest_error(socket: &mut WebSocket, error: &str) -> bool {
+    tokio::time::timeout(
+        INGEST_REPLY_TIMEOUT,
+        send_json(socket, json!({"type": "error", "error": error})),
+    )
+    .await
+    .unwrap_or(false)
+}
+
 async fn ingest_session(state: Shared, mut socket: WebSocket) {
-    {
-        let mut live = state.live.lock().await;
-        if *live {
-            let _ = send_json(
-                &mut socket,
-                json!({"type": "error", "error": "another broadcast is already running"}),
-            )
-            .await;
-            return;
-        }
-        *live = true;
+    let was_live = std::mem::replace(&mut *state.live.lock().await, true);
+    if was_live {
+        send_ingest_error(&mut socket, "another broadcast is already running").await;
+        return;
     }
     run_ingest(&state, &mut socket).await;
     *state.live.lock().await = false;
@@ -1195,12 +1313,20 @@ async fn run_ingest(state: &Shared, socket: &mut WebSocket) {
     let mut video: Option<VideoConfig> = None;
     let mut audio: Option<AudioConfig> = None;
     let mut pending: Vec<Packet> = Vec::new();
+    let mut pending_bytes = 0;
     let mut session: Option<Session> = None;
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
     let started_at = Instant::now();
+    let startup_timeout = tokio::time::sleep(INGEST_START_TIMEOUT);
+    tokio::pin!(startup_timeout);
 
     let stop_reason = loop {
         tokio::select! {
+            _ = &mut startup_timeout, if session.is_none() => {
+                let reason = "timed out waiting for broadcast configuration";
+                send_ingest_error(socket, reason).await;
+                break reason;
+            }
             incoming = socket.recv() => {
                 let msg = match incoming {
                     Some(Ok(msg)) => msg,
@@ -1209,17 +1335,26 @@ async fn run_ingest(state: &Shared, socket: &mut WebSocket) {
                 match msg {
                     Message::Binary(data) => {
                         let Some(packet) = parse_media(&data) else { continue };
-                        match session.as_mut() {
-                            Some(s) => s.push(packet),
-                            None if pending.len() < 1000 => pending.push(packet),
-                            None => {}
+                        if let Some(s) = session.as_mut() {
+                            s.push(packet);
+                        } else {
+                            let next_size = pending_bytes + packet.data.len();
+                            if next_size > MAX_PENDING_INGEST_BYTES || pending.len() == MAX_PENDING_INGEST_PACKETS {
+                                let reason = "too much media before broadcast configuration";
+                                send_ingest_error(socket, reason).await;
+                                break reason;
+                            }
+                            pending_bytes = next_size;
+                            pending.push(packet);
                         }
                     }
                     Message::Text(text) => {
                         let control = match serde_json::from_str::<IngestControl>(&text) {
                             Ok(c) => c,
                             Err(e) => {
-                                send_json(socket, json!({"type": "error", "error": format!("bad control message: {e}")})).await;
+                                if !send_ingest_error(socket, &format!("bad control message: {e}")).await {
+                                    break "studio disconnected";
+                                }
                                 continue;
                             }
                         };
@@ -1230,7 +1365,7 @@ async fn run_ingest(state: &Shared, socket: &mut WebSocket) {
                             }
                             IngestControl::AudioConfig { sample_rate, channels, bitrate, description } => {
                                 let Some(asc) = crate::media::audio_specific_config(&description) else {
-                                    send_json(socket, json!({"type": "error", "error": "unsupported audio encoder configuration"})).await;
+                                    send_ingest_error(socket, "unsupported audio encoder configuration").await;
                                     break "could not start";
                                 };
                                 audio = Some(AudioConfig { sample_rate, channels, bitrate, asc });
@@ -1246,7 +1381,7 @@ async fn run_ingest(state: &Shared, socket: &mut WebSocket) {
                                         send_json(socket, json!({"type": "started"})).await;
                                     }
                                     Err(e) => {
-                                        send_json(socket, json!({"type": "error", "error": e})).await;
+                                        send_ingest_error(socket, &e).await;
                                         break "could not start";
                                     }
                                 }
@@ -1276,7 +1411,7 @@ async fn run_ingest(state: &Shared, socket: &mut WebSocket) {
         let (outputs, recording) = s.stop().await;
         send_json(socket, json!({"type": "stopped", "reason": stop_reason, "outputs": outputs, "recording": recording})).await;
     }
-    let _ = socket.send(Message::Close(None)).await;
+    let _ = tokio::time::timeout(INGEST_REPLY_TIMEOUT, socket.send(Message::Close(None))).await;
 }
 
 async fn build_session(
