@@ -57,6 +57,8 @@ winresource = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["test-util"] }
+tokio-tungstenite = "0.29"
 
 [profile.release]
 lto = "thin"
